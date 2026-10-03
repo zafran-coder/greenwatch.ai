@@ -1,0 +1,112 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String      @id @default(cuid())
+  email        String      @unique
+  passwordHash String
+  name         String
+  role         String      @default("OFFICIAL") // "OFFICIAL" | "ADMIN"
+  department   String?     // "Sanitation" | "Parks & Forestry" | "Water Utility" | "Public Works"
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  reports      Report[]
+  workOrders   WorkOrder[]
+
+  @@map("users")
+}
+
+model Report {
+  id             String       @id @default(cuid())
+  ref            String       @unique // "GW-XXXX"
+  category       String       // "garbage" | "tree" | "water" | "plants" | "park" | "blocked"
+  description    String
+  address        String
+  area           String
+  lat            Float?
+  lng            Float?
+  priority       String       @default("Medium") // "High" | "Medium" | "Low"
+  status         String       @default("New")    // "New" | "Verified" | "Assigned" | "In Progress" | "Resolved"
+  department     String       // "Sanitation" | "Parks & Forestry" | "Water Utility" | "Public Works"
+  assignee       String?      // Display name of official (e.g. "M. Alvarez")
+  assignedUserId String?
+  assignedUser   User?        @relation(fields: [assignedUserId], references: [id], onDelete: SetNull)
+  workOrderRef   String?      // "WO-XXXX"
+  dueDate        DateTime?
+  resolvedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  photos         Photo[]
+  ai             AiMetadata?
+  activity       Activity[]
+  workOrder      WorkOrder?
+
+  @@index([category])
+  @@index([status])
+  @@index([priority])
+  @@index([department])
+  @@map("reports")
+}
+
+model Photo {
+  id        String   @id @default(cuid())
+  reportId  String
+  report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  url       String
+  createdAt DateTime @default(now())
+
+  @@map("photos")
+}
+
+model AiMetadata {
+  id           String   @id @default(cuid())
+  reportId     String   @unique
+  report       Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  severity     String   // "High" | "Medium" | "Low"
+  reason       String
+  evidence     String   // "Good" | "Needs more info"
+  confidence   Int      // 0 - 100
+  similarCount Int      @default(0)
+  similarIds   String   @default("[]") // JSON array of string IDs
+  createdAt    DateTime @default(now())
+
+  @@map("ai_metadata")
+}
+
+model Activity {
+  id        String   @id @default(cuid())
+  reportId  String
+  report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  kind      String   // "agent" | "human"
+  who       String   // e.g. "Triage Agent", "M. Alvarez", "You (Official)"
+  text      String
+  createdAt DateTime @default(now())
+
+  @@index([reportId])
+  @@map("activities")
+}
+
+model WorkOrder {
+  id             String    @id @default(cuid())
+  ref            String    @unique // "WO-XXXX"
+  reportId       String    @unique
+  report         Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  department     String
+  status         String    @default("Pending") // "Pending" | "Dispatched" | "In Progress" | "Completed"
+  assignedTo     String?
+  assignedUserId String?
+  assignedUser   User?     @relation(fields: [assignedUserId], references: [id], onDelete: SetNull)
+  dueDate        DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@map("work_orders")
+}

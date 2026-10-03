@@ -1,0 +1,1337 @@
+openapi: 3.1.0
+info:
+  title: GreenWatch AI Municipal Operations API
+  summary: AI-coordinated civic engagement & municipal workflow contract.
+  description: |
+    Official REST API contract for GreenWatch AI.
+    Philosophy: "AI suggested · human approved".
+    
+    Roles:
+    - Citizen (unauthenticated public user; submits reports, tracks tickets via reference GW-XXXX).
+    - Official (authenticated municipal worker; reviews reports, assigns crews, updates SLA & status).
+    - Admin (system administrator; manages departments, officials, audits).
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  version: 1.0.0
+servers:
+  - url: /api
+    description: Relative proxy URL
+  - url: https://api.greenwatch.gov/api
+    description: Production municipal cloud gateway
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check endpoint
+      description: Returns health status, timestamp, and service info.
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - timestamp
+                  - service
+                  - version
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+                  service:
+                    type: string
+                    example: GreenWatch AI Municipal API
+                  version:
+                    type: string
+                    example: 1.0.0
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+
+  /auth/login:
+    post:
+      operationId: loginUser
+      summary: Authenticate official / admin
+      description: Exchanges email and password for a signed JWT token and user profile.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  /auth/register:
+    post:
+      operationId: registerUser
+      summary: Register municipal official account
+      description: Registers an official or admin user with department assignment.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Account created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '409':
+          description: Email already in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      summary: Get current authenticated user
+      description: Retrieves identity, role, and department from active JWT token.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  /reports:
+    get:
+      operationId: listReports
+      summary: List and search reports
+      description: |
+        Retrieves a paginated list of environmental reports with multi-criteria filtering:
+        status, category, priority, department, and free-text search across reference, description, and location.
+      security: []
+      parameters:
+        - name: status
+          in: query
+          description: Filter by status (or "All")
+          schema:
+            type: string
+            enum: [All, New, Verified, Assigned, In Progress, Resolved]
+        - name: category
+          in: query
+          description: Filter by category (or "All")
+          schema:
+            type: string
+            enum: [All, garbage, tree, water, plants, park, blocked]
+        - name: priority
+          in: query
+          description: Filter by priority (or "All")
+          schema:
+            type: string
+            enum: [All, High, Medium, Low]
+        - name: department
+          in: query
+          description: Filter by assigned department (or "All")
+          schema:
+            type: string
+            enum: [All, "Sanitation", "Parks & Forestry", "Water Utility", "Public Works"]
+        - name: q
+          in: query
+          description: Search term across reference, description, address, and area
+          schema:
+            type: string
+        - name: page
+          in: query
+          description: Page number (1-indexed)
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          description: Number of reports per page
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: sortBy
+          in: query
+          description: Field to sort by
+          schema:
+            type: string
+            enum: [createdAt, dueDate, priority, status]
+            default: createdAt
+        - name: sortOrder
+          in: query
+          description: Sort direction
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Paginated report collection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportListResponse'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+
+    post:
+      operationId: createReport
+      summary: Submit a new citizen report
+      description: |
+        Public endpoint. Triggers the 7-stage autonomous AI pipeline:
+        1. Triage Agent (category classification + confidence)
+        2. Evidence Agent (visual & textual verification)
+        3. Duplicate Detection Agent (spatial/category scan)
+        4. Priority Agent (risk assessment + SLA calculation)
+        5. Department Routing Agent (jurisdiction assignment)
+        6. Work Order Agent (WO-XXXX generation + due date dispatch)
+        Returns the created report and animated step telemetry.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportRequest'
+      responses:
+        '201':
+          description: Report created and processed by AI pipeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateReportResponse'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+
+  /reports/upload-photo:
+    post:
+      operationId: uploadReportPhoto
+      summary: Upload evidence photo
+      description: Uploads JPG/PNG image evidence (max 10MB) and returns accessible URL.
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - photo
+              properties:
+                photo:
+                  type: string
+                  format: binary
+                  description: Image file (JPG/PNG)
+      responses:
+        '201':
+          description: Photo uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - url
+                  - filename
+                properties:
+                  url:
+                    type: string
+                    format: uri
+                    example: https://greenwatch.gov/uploads/evidence-171829102.jpg
+                  filename:
+                    type: string
+                    example: evidence-171829102.jpg
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+
+  /reports/analyze:
+    post:
+      operationId: analyzeIssue
+      summary: On-demand AI issue triage (preview)
+      description: Pre-submission analysis for live feedback and validation.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - description
+              properties:
+                description:
+                  type: string
+                  minLength: 10
+                photoCount:
+                  type: integer
+                  default: 0
+      responses:
+        '200':
+          description: AI classification and severity reasoning
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - analysis
+                properties:
+                  analysis:
+                    $ref: '#/components/schemas/AIAnalysis'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+
+  /reports/{id}:
+    get:
+      operationId: getReportById
+      summary: Get report by ID or reference
+      description: Retrieves single report details by database ID (e.g. "r1") or public tracking reference (e.g. "GW-2041").
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Unique report ID or reference string (GW-XXXX)
+          schema:
+            type: string
+            example: GW-2041
+      responses:
+        '200':
+          description: Report details
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Report'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+
+    patch:
+      operationId: updateReport
+      summary: Update report (General patch)
+      description: Updates report status, department, priority, assignee, SLA due date, or adds notes.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReportRequest'
+      responses:
+        '200':
+          description: Updated report
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Report'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+
+  /reports/{id}/status:
+    patch:
+      operationId: updateReportStatus
+      summary: Transition report status
+      description: Validates status state machine transitions (New -> Verified -> Assigned -> In Progress -> Resolved).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStatusRequest'
+      responses:
+        '200':
+          description: Status updated and audit entry recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Report'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+
+  /reports/{id}/work-order:
+    patch:
+      operationId: updateWorkOrder
+      summary: Modify work order assignment & SLA
+      description: Assigns an official from the department queue, changes SLA due date, or updates work order details.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkOrderRequest'
+      responses:
+        '200':
+          description: Work order modified
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Report'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+
+  /reports/{id}/activity:
+    get:
+      operationId: getReportActivity
+      summary: Get activity log
+      description: Chronological list of agent actions and human notes for this report.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Activity log entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ActivityLogEntry'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+
+    post:
+      operationId: addReportActivity
+      summary: Add activity log note
+      description: Appends an official note or external inspection log to the report audit trail.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddActivityRequest'
+      responses:
+        '200':
+          description: Activity added
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Report'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+
+  /reports/{id}/follow-up:
+    post:
+      operationId: triggerFollowUp
+      summary: Trigger Follow-up Agent SLA check
+      description: |
+        Runs evaluation against report timeline:
+        - If overdue by >48h without update -> escalates to supervisor.
+        - If resolved -> schedules citizen confirmation.
+        - If 24h passed since resolution without dispute -> closes loop.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Follow-up agent evaluation and updated report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowUpTriggerResponse'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+
+  /analytics:
+    get:
+      operationId: getAnalytics
+      summary: Get full dashboard analytics
+      description: Aggregated platform metrics, 14-day filing vs resolution trend, category breakdown, and department SLA rates.
+      security: []
+      responses:
+        '200':
+          description: Analytics dashboard bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AnalyticsResponse'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+
+  /analytics/kpis:
+    get:
+      operationId: getKPIs
+      summary: Get operational KPIs
+      description: Real-time counts for New, In Progress, Overdue, and Resolved Today cards.
+      security: []
+      responses:
+        '200':
+          description: KPI statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/KPIStats'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+
+  /analytics/trends:
+    get:
+      operationId: getTrends
+      summary: 14-day filing vs resolution trend
+      description: Daily counts of reports filed vs resolved for the last 14 days.
+      security: []
+      responses:
+        '200':
+          description: Trend history
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrendDataPoint'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+
+  /analytics/departments:
+    get:
+      operationId: getDepartmentPerformance
+      summary: Department resolution performance
+      description: Resolution rate percentages by municipal department within SLA.
+      security: []
+      responses:
+        '200':
+          description: Department performance list
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeptPerformance'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+
+  /officials:
+    get:
+      operationId: listOfficials
+      summary: List municipal officials
+      description: Returns municipal staff directory grouped by department for assignment select dropdowns.
+      security: []
+      responses:
+        '200':
+          description: Directory of officials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialListResponse'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT authentication token for municipal officials and admins.
+
+  responses:
+    400ValidationError:
+      description: Input validation failure
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorEnvelope'
+    401Unauthorized:
+      description: Authentication required or invalid token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    404NotFound:
+      description: Requested resource was not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+  schemas:
+    CategoryEnum:
+      type: string
+      enum:
+        - garbage
+        - tree
+        - water
+        - plants
+        - park
+        - blocked
+      description: |
+        - `garbage`: Illegal Garbage Dumping
+        - `tree`: Fallen / Damaged Tree
+        - `water`: Water Leakage / Wastage
+        - `plants`: Damaged Plants
+        - `park`: Dirty Park
+        - `blocked`: Blocked Green Area
+
+    DepartmentEnum:
+      type: string
+      enum:
+        - Sanitation
+        - Parks & Forestry
+        - Water Utility
+        - Public Works
+
+    PriorityEnum:
+      type: string
+      enum:
+        - High
+        - Medium
+        - Low
+
+    StatusEnum:
+      type: string
+      enum:
+        - New
+        - Verified
+        - Assigned
+        - In Progress
+        - Resolved
+
+    EvidenceEnum:
+      type: string
+      enum:
+        - Good
+        - Needs more info
+
+    Location:
+      type: object
+      required:
+        - address
+        - area
+      properties:
+        address:
+          type: string
+          example: Market Court, behind Block C dumpsters
+        area:
+          type: string
+          example: Riverside District
+        lat:
+          type:
+            - number
+            - 'null'
+          example: 40.7123
+        lng:
+          type:
+            - number
+            - 'null'
+          example: -74.0021
+
+    ActivityLogEntry:
+      type: object
+      required:
+        - kind
+        - who
+        - text
+        - at
+      properties:
+        kind:
+          type: string
+          enum: [agent, human]
+          example: agent
+        who:
+          type: string
+          example: Triage Agent
+        text:
+          type: string
+          example: Classified as Illegal Garbage Dumping (94% confidence).
+        at:
+          type: string
+          format: date-time
+          example: '2026-09-30T09:50:00.000Z'
+
+    AIMetadata:
+      type: object
+      required:
+        - severity
+        - reason
+        - evidence
+        - confidence
+        - similar
+      properties:
+        severity:
+          $ref: '#/components/schemas/PriorityEnum'
+        reason:
+          type: string
+          example: Public health and environmental risk
+        evidence:
+          $ref: '#/components/schemas/EvidenceEnum'
+        confidence:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 94
+        similar:
+          type: object
+          required:
+            - count
+            - ids
+          properties:
+            count:
+              type: integer
+              example: 2
+            ids:
+              type: array
+              items:
+                type: string
+              example: [r8]
+
+    AgentStep:
+      type: object
+      required:
+        - key
+        - label
+        - detail
+      properties:
+        key:
+          type: string
+          example: triage
+        label:
+          type: string
+          example: Triage Agent
+        detail:
+          type: string
+          example: Classified as Illegal Garbage Dumping · 94% confident
+
+    Report:
+      type: object
+      required:
+        - id
+        - ref
+        - category
+        - description
+        - location
+        - photos
+        - priority
+        - status
+        - department
+        - createdAt
+        - updatedAt
+        - workOrder
+        - ai
+        - activity
+      properties:
+        id:
+          type: string
+          example: r1
+        ref:
+          type: string
+          pattern: '^GW-\d+$'
+          example: GW-2041
+        category:
+          $ref: '#/components/schemas/CategoryEnum'
+        description:
+          type: string
+          example: Six or seven garbage bags dumped behind market dumpsters.
+        location:
+          $ref: '#/components/schemas/Location'
+        photos:
+          type: array
+          items:
+            type: string
+          example: [/src/assets/garbage.jpg]
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+        status:
+          $ref: '#/components/schemas/StatusEnum'
+        department:
+          $ref: '#/components/schemas/DepartmentEnum'
+        assignee:
+          type:
+            - string
+            - 'null'
+          example: M. Alvarez
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        dueDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        resolvedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        workOrder:
+          type:
+            - string
+            - 'null'
+          pattern: '^WO-\d+$'
+          example: WO-1187
+        ai:
+          $ref: '#/components/schemas/AIMetadata'
+        activity:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityLogEntry'
+
+    CreateReportRequest:
+      type: object
+      required:
+        - description
+        - location
+      properties:
+        description:
+          type: string
+          minLength: 10
+          example: A large eucalyptus branch fell across the walking track near the F-9 gate.
+        location:
+          $ref: '#/components/schemas/Location'
+        photos:
+          type: array
+          items:
+            type: string
+          default: []
+
+    CreateReportResponse:
+      type: object
+      required:
+        - data
+        - steps
+      properties:
+        data:
+          $ref: '#/components/schemas/Report'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentStep'
+
+    ReportListResponse:
+      type: object
+      required:
+        - data
+        - total
+        - page
+        - limit
+        - totalPages
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Report'
+        total:
+          type: integer
+          example: 12
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 50
+        totalPages:
+          type: integer
+          example: 1
+
+    UpdateReportRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/StatusEnum'
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+        department:
+          $ref: '#/components/schemas/DepartmentEnum'
+        assignee:
+          type:
+            - string
+            - 'null'
+        dueDate:
+          type: string
+          format: date-time
+        note:
+          type: string
+        activityEntry:
+          type: object
+          properties:
+            kind:
+              type: string
+              enum: [agent, human]
+            who:
+              type: string
+            text:
+              type: string
+
+    UpdateStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          $ref: '#/components/schemas/StatusEnum'
+        note:
+          type: string
+          description: Optional note explaining the status change
+
+    UpdateWorkOrderRequest:
+      type: object
+      properties:
+        assignee:
+          type:
+            - string
+            - 'null'
+          example: J. Okafor
+        dueDate:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [Pending, Dispatched, In Progress, Completed]
+
+    AddActivityRequest:
+      type: object
+      required:
+        - text
+      properties:
+        kind:
+          type: string
+          enum: [agent, human]
+          default: human
+        who:
+          type: string
+          example: You (Official)
+        text:
+          type: string
+          example: Checked site; crew scheduled for morning.
+
+    FollowUpTriggerResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - evaluation
+            - report
+          properties:
+            evaluation:
+              type: object
+              required:
+                - action
+                - message
+                - needsNotification
+              properties:
+                action:
+                  type: string
+                  enum: [none, overdue_reminder, overdue_escalation, citizen_confirmation, closed_loop]
+                message:
+                  type: string
+                needsNotification:
+                  type: boolean
+            report:
+              $ref: '#/components/schemas/Report'
+
+    AIAnalysis:
+      type: object
+      required:
+        - category
+        - categoryLabel
+        - department
+        - priority
+        - reason
+        - evidence
+        - confidence
+        - similarReports
+      properties:
+        category:
+          $ref: '#/components/schemas/CategoryEnum'
+        categoryLabel:
+          type: string
+          example: Illegal Garbage Dumping
+        department:
+          $ref: '#/components/schemas/DepartmentEnum'
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+        reason:
+          type: string
+        evidence:
+          $ref: '#/components/schemas/EvidenceEnum'
+        confidence:
+          type: integer
+          example: 94
+        similarReports:
+          type: array
+          items:
+            $ref: '#/components/schemas/Report'
+
+    KPIStats:
+      type: object
+      required:
+        - fresh
+        - active
+        - overdue
+        - resolvedToday
+      properties:
+        fresh:
+          type: integer
+          description: Reports with status New or Verified
+          example: 3
+        active:
+          type: integer
+          description: Open reports with status Assigned or In Progress
+          example: 4
+        overdue:
+          type: integer
+          description: Open reports past SLA due date
+          example: 2
+        resolvedToday:
+          type: integer
+          description: Reports marked Resolved today
+          example: 1
+
+    TrendDataPoint:
+      type: object
+      required:
+        - day
+        - filed
+        - resolved
+      properties:
+        day:
+          type: string
+          example: Sep 20
+        filed:
+          type: integer
+          example: 6
+        resolved:
+          type: integer
+          example: 5
+
+    DeptPerformance:
+      type: object
+      required:
+        - name
+        - rate
+      properties:
+        name:
+          $ref: '#/components/schemas/DepartmentEnum'
+        rate:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 84
+
+    AnalyticsResponse:
+      type: object
+      required:
+        - stats
+        - trend14
+        - categoryCounts
+        - deptRates
+        - platform
+      properties:
+        stats:
+          $ref: '#/components/schemas/KPIStats'
+        trend14:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendDataPoint'
+        categoryCounts:
+          type: object
+          additionalProperties:
+            type: integer
+        deptRates:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeptPerformance'
+        platform:
+          type: object
+          required:
+            - totalFiled
+            - resolvedPct
+            - avgDays
+          properties:
+            totalFiled:
+              type: integer
+              example: 1284
+            resolvedPct:
+              type: integer
+              example: 87
+            avgDays:
+              type: number
+              example: 2.1
+
+    OfficialListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          properties:
+            Sanitation:
+              type: array
+              items:
+                type: string
+              example: ["M. Alvarez", "S. Chen", "T. Ramos"]
+            Parks & Forestry:
+              type: array
+              items:
+                type: string
+              example: ["J. Okafor", "L. Novak"]
+            Water Utility:
+              type: array
+              items:
+                type: string
+              example: ["R. Kapoor", "T. Nguyen"]
+            Public Works:
+              type: array
+              items:
+                type: string
+              example: ["D. Petrova", "A. Mensah"]
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: m.alvarez@greenwatch.gov
+        password:
+          type: string
+          format: password
+          example: Password123!
+
+    LoginResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - token
+            - user
+          properties:
+            token:
+              type: string
+              example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+            user:
+              $ref: '#/components/schemas/UserProfile'
+
+    RegisterRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+      properties:
+        name:
+          type: string
+          example: Maria Alvarez
+        email:
+          type: string
+          format: email
+          example: m.alvarez@greenwatch.gov
+        password:
+          type: string
+          format: password
+          minLength: 6
+        role:
+          type: string
+          enum: [OFFICIAL, ADMIN]
+          default: OFFICIAL
+        department:
+          $ref: '#/components/schemas/DepartmentEnum'
+
+    UserProfile:
+      type: object
+      required:
+        - id
+        - email
+        - name
+        - role
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [OFFICIAL, ADMIN]
+        department:
+          type:
+            - string
+            - 'null'
+
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: NOT_FOUND
+            message:
+              type: string
+              example: Resource not found
+
+    ValidationErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - details
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Validation failed
+            details:
+              type: array
+              items:
+                type: object
+                required:
+                  - field
+                  - message
+                properties:
+                  field:
+                    type: string
+                    example: description
+                  message:
+                    type: string
+                    example: Must be at least 10 characters
