@@ -46,21 +46,32 @@ export class SupabaseStorage extends StorageDriver {
     }
 
     const cleanPath = path.replace(/^\/+/, "");
-    
-    // Convert Buffer to Blob for Vercel/Node native fetch compatibility
-    // Native fetch handles Blobs correctly without 'duplex' issues
-    const blob = new Blob([buffer], { type: contentType });
+    const targetUrl = `${this.url}/storage/v1/object/${this.bucket}/${cleanPath}`;
 
-    const { data, error } = await this.client.storage
-      .from(this.bucket)
-      .upload(cleanPath, blob, {
-        contentType,
-        upsert: true,
-        cacheControl: "3600",
+    try {
+      // Bypassing supabase-js wrapper to avoid Vercel edge/node fetch bugs
+      const response = await fetch(targetUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.key}`,
+          "apikey": this.key,
+          "Content-Type": contentType,
+          "Cache-Control": "max-age=3600",
+          "x-upsert": "true",
+        },
+        body: buffer,
+        duplex: "half",
       });
 
-    if (error) {
-      throw new Error(`Supabase Storage upload failed: ${error.message}`);
+      if (!response.ok) {
+        let errText = await response.text();
+        try {
+           errText = JSON.parse(errText).message || errText;
+        } catch(e) {}
+        throw new Error(errText || response.statusText);
+      }
+    } catch (err) {
+      throw new Error(`Supabase Storage upload failed: ${err.message}`);
     }
 
     const signedUrl = await this.getSignedUrl(cleanPath, 86400); // 24h signed URL
