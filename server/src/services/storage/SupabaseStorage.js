@@ -46,12 +46,17 @@ export class SupabaseStorage extends StorageDriver {
     }
 
     const cleanPath = path.replace(/^\/+/, "");
+    
+    // Vercel / Node 18+ fetch compatibility for POST bodies
+    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+
     const { data, error } = await this.client.storage
       .from(this.bucket)
-      .upload(cleanPath, buffer, {
+      .upload(cleanPath, arrayBuffer, {
         contentType,
         upsert: true,
         cacheControl: "3600",
+        duplex: "half",
       });
 
     if (error) {
