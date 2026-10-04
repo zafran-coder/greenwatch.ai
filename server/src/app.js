@@ -38,10 +38,17 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
+      let isVercel = false;
+      try {
+        if (origin) isVercel = /\.vercel\.app$/.test(new URL(origin).hostname);
+      } catch (_) {}
+
       // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
       // or local development origins (localhost / 127.0.0.1 with any port)
+      // or any .vercel.app deployment domain
       if (
         !origin ||
+        isVercel ||
         allowedOrigins.includes("*") ||
         allowedOrigins.includes(origin) ||
         (config.nodeEnv !== "production" && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))
