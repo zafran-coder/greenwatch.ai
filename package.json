@@ -10,16 +10,29 @@
     "seed": "npm --prefix server run seed"
   },
   "dependencies": {
+    "@prisma/client": "^6.4.1",
     "@supabase/supabase-js": "^2.117.2",
+    "bcryptjs": "^3.0.2",
     "clsx": "2.1.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "exif-reader": "^2.0.3",
+    "express": "^4.21.2",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.51.0",
+    "multer": "^2.4.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-leaflet": "^5.0.0",
     "react-router-dom": "^7.18.4",
     "recharts": "^3.10.1",
-    "tailwind-merge": "3.4.0"
+    "sharp": "^0.35.5",
+    "tailwind-merge": "3.4.0",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.17",
