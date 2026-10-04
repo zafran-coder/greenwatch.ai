@@ -5,6 +5,8 @@
 
 GreenWatch AI empowers citizens to report environmental and municipal issues (illegal garbage dumping, fallen/damaged trees, water leakage/wastage, damaged plants, dirty parks, blocked green areas) while coordinating municipal departments through an autonomous 7-agent AI pipeline.
 
+**🔴 Live Demo:** [https://greenwatch-ai-agents.vercel.app](https://greenwatch-ai-agents.vercel.app)
+
 [![Vite](https://img.shields.io/badge/Vite-7.x-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
 [![React](https://img.shields.io/badge/React-19.x-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![TailwindCSS](https://img.shields.io/badge/TailwindCSS-v4-38B2AC?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
