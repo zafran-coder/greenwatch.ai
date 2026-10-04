@@ -126,8 +126,8 @@ export async function apiClient(endpoint, options = {}) {
 
   // Cross-origin Bearer token fallback if cookie is partitioned or blocked
   const authToken =
-    typeof localStorage !== "undefined"
-      ? localStorage.getItem("greenwatch_auth_token")
+    typeof sessionStorage !== "undefined"
+      ? sessionStorage.getItem("greenwatch_auth_token")
       : null;
 
   const requestHeaders = {

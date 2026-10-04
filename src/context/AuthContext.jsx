@@ -11,7 +11,7 @@ export function AuthProvider({ children }) {
   const toast = useToast();
   const [role, setRoleState] = useState(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = sessionStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed?.role === "official") return "official";
@@ -22,7 +22,7 @@ export function AuthProvider({ children }) {
 
   const [user, setUser] = useState(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = sessionStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         return parsed?.user || null;
@@ -44,7 +44,7 @@ export function AuthProvider({ children }) {
         if (verifiedUser) {
           setUser(verifiedUser);
           setRoleState("official");
-          localStorage.setItem(
+          sessionStorage.setItem(
             STORAGE_KEY,
             JSON.stringify({ role: "official", user: verifiedUser })
           );
@@ -53,7 +53,7 @@ export function AuthProvider({ children }) {
           if (role === "official") {
             setRoleState("citizen");
             setUser(null);
-            localStorage.removeItem(STORAGE_KEY);
+            sessionStorage.removeItem(STORAGE_KEY);
           }
         }
       })
@@ -86,7 +86,7 @@ export function AuthProvider({ children }) {
       const res = await api.auth.login(credentials);
       const token = res?.token || res?.data?.token;
       if (token) {
-        localStorage.setItem("greenwatch_auth_token", token);
+        sessionStorage.setItem("greenwatch_auth_token", token);
       }
 
       const loggedUser = res?.user || res?.data?.user || {
@@ -97,7 +97,7 @@ export function AuthProvider({ children }) {
 
       setUser(loggedUser);
       setRoleState("official");
-      localStorage.setItem(
+      sessionStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({ role: "official", user: loggedUser })
       );
@@ -126,8 +126,8 @@ export function AuthProvider({ children }) {
     }
     setUser(null);
     setRoleState("citizen");
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem("greenwatch_auth_token");
+    sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem("greenwatch_auth_token");
     toast("Signed out — viewing as Citizen", "info");
   }, [toast]);
 

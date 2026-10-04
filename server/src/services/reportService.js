@@ -155,19 +155,15 @@ export const reportService = {
     // Await completion for synchronous clients & API test suites
     let enriched = created;
     if (job) {
-      try {
-        const pipelineResult = await pipelineQueue.waitForJob(created.id, 10000);
-        enriched = (await db.findReportById(created.id)) || created;
-        if (Array.isArray(enriched.photos)) {
-          enriched.photos = await resolvePhotoUrls(enriched.photos);
-        }
-        return {
-          report: enriched,
-          photos: savedPhotos,
-          steps: pipelineResult.steps || job.steps,
-        };
-      } catch (err) {
+      const pipelinePromise = pipelineQueue.waitForJob(created.id, 50000).catch(err => {
         console.warn(`[ReportService] Pipeline awaiting finished with notice:`, err.message);
+      });
+      
+      try {
+        const { waitUntil } = await import("@vercel/functions");
+        waitUntil(pipelinePromise);
+      } catch (e) {
+        // Not on Vercel or module missing, fallback to fire-and-forget
       }
     }
 

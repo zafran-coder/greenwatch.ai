@@ -1,22 +1,24 @@
-export default async function handler(req, res) {
-  try {
-    const matchedPath = req.headers["x-matched-path"] || req.headers["x-vercel-matched-path"];
-    if (matchedPath && matchedPath.startsWith("/api")) {
-      req.url = matchedPath;
-    } else if (req.url && !req.url.startsWith("/api")) {
-      req.url = `/api${req.url.startsWith("/") ? "" : "/"}${req.url}`;
-    }
+import { app } from "../server/src/app.js";
 
-    const { app } = await import("../server/src/app.js");
-    return app(req, res);
-  } catch (err) {
-    console.error("[Vercel Serverless Error]:", err);
-    return res.status(500).json({
-      error: {
-        code: "SERVERLESS_FUNCTION_ERROR",
-        message: err.message || "Serverless Function Execution Failed",
-        stack: err.stack,
-      },
-    });
-  }
+const requiredEnv = [
+  "DATABASE_URL",
+  "SUPABASE_URL",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_STORAGE_BUCKET",
+  "STORAGE_DRIVER",
+  "JWT_SECRET",
+  "COOKIE_SECRET",
+  "ADMIN_EMAIL",
+  "ADMIN_PASSWORD",
+  "CRON_SECRET",
+  "GEMINI_API_KEY",
+  "GEMINI_MODEL",
+  "NODE_ENV"
+];
+
+const missingEnv = requiredEnv.filter((v) => !process.env[v]);
+if (missingEnv.length > 0) {
+  console.log("MISSING ENV VARS:", missingEnv.join(", "));
 }
+
+export default app;

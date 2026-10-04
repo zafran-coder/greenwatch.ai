@@ -83,20 +83,6 @@ export default function ReportIssue() {
   const clearError = (key) =>
     setErrors((e) => (e[key] ? { ...e, [key]: undefined } : e));
 
-  const fillSample = () => {
-    const s = SAMPLES[Math.floor(Math.random() * SAMPLES.length)];
-    setDescription(s.description);
-    setLocation({
-      address: s.location,
-      area: s.area,
-      lat: s.lat,
-      lng: s.lng,
-    });
-    setPhotos([{ id: `sample-${Date.now()}`, url: s.photo }]);
-    setErrors({});
-    toast("Sample report filled — review and submit", "info");
-  };
-
   const reset = () => {
     setDescription("");
     setPhotos([]);
@@ -112,26 +98,88 @@ export default function ReportIssue() {
     window.scrollTo({ top: 0 });
   };
 
-  // Convert photos array to real binary File objects for FormData
+  const compressImage = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          let width = img.width;
+          let height = img.height;
+          const maxDim = 1600;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height *= maxDim / width));
+              width = maxDim;
+            } else {
+              width = Math.round((width *= maxDim / height));
+              height = maxDim;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                resolve(new File([blob], file.name, { type: "image/jpeg" }));
+              } else {
+                reject(new Error("Canvas is empty"));
+              }
+            },
+            "image/jpeg",
+            0.8
+          );
+        };
+        img.onerror = (error) => reject(error);
+      };
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
   const preparePhotosForUpload = async () => {
     const fileList = [];
     for (const p of photos) {
+      let fileToUpload = null;
       if (p.file instanceof File) {
-        fileList.push(p.file);
+        fileToUpload = p.file;
       } else if (p.url) {
         try {
           const res = await fetch(p.url);
           const blob = await res.blob();
           const ext = blob.type.includes("png") ? "png" : "jpg";
-          const file = new File([blob], `evidence-${Date.now()}.${ext}`, {
+          fileToUpload = new File([blob], `evidence-${Date.now()}.${ext}`, {
             type: blob.type || "image/jpeg",
           });
-          fileList.push(file);
         } catch {
-          // If fetching as blob fails, skip
+          continue;
+        }
+      }
+      
+      if (fileToUpload) {
+        if (fileToUpload.type.startsWith("image/")) {
+          try {
+            const compressed = await compressImage(fileToUpload);
+            fileList.push(compressed);
+          } catch (err) {
+             fileList.push(fileToUpload);
+          }
+        } else {
+          fileList.push(fileToUpload);
         }
       }
     }
+    
+    // Check total size limit (approx 4MB)
+    const totalSize = fileList.reduce((acc, f) => acc + f.size, 0);
+    if (totalSize > 4 * 1024 * 1024) {
+      throw new Error("Total size of photos exceeds 4MB. Please remove some photos or use smaller ones.");
+    }
+    
     return fileList;
   };
 
@@ -351,17 +399,6 @@ export default function ReportIssue() {
 
       <Card>
         <form onSubmit={submit} className="space-y-6 p-5 sm:p-7" noValidate>
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={fillSample}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 underline-offset-2 transition-colors hover:text-green-800 hover:underline"
-            >
-              <Wand2 className="size-3.5" />
-              Fill sample report
-            </button>
-          </div>
-
           <div>
             <FieldLabel required>What's the problem?</FieldLabel>
             <textarea
