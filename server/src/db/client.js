@@ -915,8 +915,8 @@ export const db = {
           if (error.code === "23505") {
             inMemoryDb._refSeq = (inMemoryDb._refSeq || 2046) + 1;
             inMemoryDb._woSeq = (inMemoryDb._woSeq || 1197) + 1;
-            row.ref = `GW-${inMemoryDb._refSeq}`;
-            row.work_order_ref = `WO-${inMemoryDb._woSeq}`;
+            row.ref = `GW-${String(inMemoryDb._refSeq).padStart(4, "0")}`;
+            row.work_order_ref = `WO-${String(inMemoryDb._woSeq).padStart(4, "0")}`;
             const { data: retried, error: retryError } = await supabase
               .from("reports")
               .insert([row])

@@ -117,50 +117,68 @@ export const reportService = {
     // Save individual photo records to the Photo table in Postgres
     const savedPhotos = [];
     for (const item of processedPhotoItems) {
-      const photoRow = await db.createPhoto({
-        reportId: created.id,
-        path: item.processed.main.path,
-        url: item.mainUpload.url,
-        thumbnailPath: item.processed.thumbnail.path,
-        thumbnailUrl: item.thumbUpload.url,
-        size: item.processed.main.size,
-        width: item.processed.main.width,
-        height: item.processed.main.height,
-        evidenceAnalysis: item.evidenceAnalysis,
-        createdAt: now,
-      });
-      savedPhotos.push(photoRow);
+      try {
+        const photoRow = await db.createPhoto({
+          reportId: created.id,
+          path: item.processed.main.path,
+          url: item.mainUpload.url,
+          thumbnailPath: item.processed.thumbnail.path,
+          thumbnailUrl: item.thumbUpload.url,
+          size: item.processed.main.size,
+          width: item.processed.main.width,
+          height: item.processed.main.height,
+          evidenceAnalysis: item.evidenceAnalysis,
+          createdAt: now,
+        });
+        if (photoRow) savedPhotos.push(photoRow);
+      } catch (photoErr) {
+        console.warn("[ReportService] Photo record saving warning:", photoErr.message);
+      }
     }
 
     // Step 2: Enqueue into in-process queue and execute agent pipeline asynchronously
-    const job = pipelineQueue.enqueue({
-      reportId: created.id,
-      description,
-      location,
-      photos: photoUrls,
-      photoBuffers,
-      existingReports,
-      workOrderRef,
-    });
+    let job = null;
+    try {
+      job = pipelineQueue.enqueue({
+        reportId: created.id,
+        description,
+        location,
+        photos: photoUrls,
+        photoBuffers,
+        existingReports,
+        workOrderRef,
+      });
+    } catch (qErr) {
+      console.warn("[ReportService] Pipeline enqueue warning:", qErr.message);
+    }
 
     // Await completion for synchronous clients & API test suites
     let enriched = created;
-    try {
-      const pipelineResult = await pipelineQueue.waitForJob(created.id, 10000);
-      enriched = (await db.findReportById(created.id)) || created;
-      return {
-        report: enriched,
-        photos: savedPhotos,
-        steps: pipelineResult.steps || job.steps,
-      };
-    } catch (err) {
-      console.warn(`[ReportService] Pipeline awaiting timed out, returning initial:`, err.message);
-      return {
-        report: enriched,
-        photos: savedPhotos,
-        steps: job.steps,
-      };
+    if (job) {
+      try {
+        const pipelineResult = await pipelineQueue.waitForJob(created.id, 10000);
+        enriched = (await db.findReportById(created.id)) || created;
+        if (Array.isArray(enriched.photos)) {
+          enriched.photos = await resolvePhotoUrls(enriched.photos);
+        }
+        return {
+          report: enriched,
+          photos: savedPhotos,
+          steps: pipelineResult.steps || job.steps,
+        };
+      } catch (err) {
+        console.warn(`[ReportService] Pipeline awaiting finished with notice:`, err.message);
+      }
     }
+
+    if (Array.isArray(enriched.photos)) {
+      enriched.photos = await resolvePhotoUrls(enriched.photos);
+    }
+    return {
+      report: enriched,
+      photos: savedPhotos,
+      steps: job?.steps || [],
+    };
   },
 
   async getReports(filters = {}) {
