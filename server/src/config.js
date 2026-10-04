@@ -7,6 +7,22 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 dotenv.config();
 
+function cleanUrl(val) {
+  if (!val || typeof val !== "string") return null;
+  let s = val.trim().replace(/^["']|["']$/g, "").trim();
+  if (!s) return null;
+  if (!/^https?:\/\//i.test(s)) {
+    s = "https://" + s;
+  }
+  return s.replace(/\/+$/, "");
+}
+
+function cleanStr(val) {
+  if (!val || typeof val !== "string") return null;
+  const s = val.trim().replace(/^["']|["']$/g, "").trim();
+  return s || null;
+}
+
 export const config = {
   port: parseInt(process.env.PORT || "4000", 10),
   nodeEnv: process.env.NODE_ENV || "development",
@@ -25,15 +41,15 @@ export const config = {
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   },
   ai: {
-    geminiApiKey: process.env.GEMINI_API_KEY || null,
-    geminiModel: process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
+    geminiApiKey: cleanStr(process.env.GEMINI_API_KEY) || null,
+    geminiModel: cleanStr(process.env.GEMINI_MODEL) || "gemini-3.5-flash-lite",
   },
   cronSecret: process.env.CRON_SECRET || "greenwatch_cron_secret",
   supabase: {
-    url: process.env.SUPABASE_URL || null,
-    anonKey: process.env.SUPABASE_ANON_KEY || null,
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || null,
-    bucket: process.env.SUPABASE_STORAGE_BUCKET || "evidence",
+    url: cleanUrl(process.env.SUPABASE_URL) || "https://kbrwjxonrllfysjorzvz.supabase.co",
+    anonKey: cleanStr(process.env.SUPABASE_ANON_KEY) || null,
+    serviceRoleKey: cleanStr(process.env.SUPABASE_SERVICE_ROLE_KEY) || null,
+    bucket: cleanStr(process.env.SUPABASE_STORAGE_BUCKET) || "evidence",
   },
   storage: {
     driver: process.env.STORAGE_DRIVER || "supabase",

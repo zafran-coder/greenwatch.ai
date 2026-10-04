@@ -11,20 +11,26 @@ export class SupabaseStorage extends StorageDriver {
    */
   constructor(options = {}) {
     super();
-    this.url = options.url || process.env.SUPABASE_URL || config.supabase.url;
+    this.url = config.supabase.url || options.url || process.env.SUPABASE_URL || "https://kbrwjxonrllfysjorzvz.supabase.co";
     // Server-side service-role key prioritized for backend storage operations
-    this.key =
+    const rawKey =
       options.key ||
       process.env.SUPABASE_SERVICE_ROLE_KEY ||
       config.supabase.serviceRoleKey ||
       process.env.SUPABASE_ANON_KEY ||
       config.supabase.anonKey;
+    this.key = typeof rawKey === "string" ? rawKey.trim().replace(/^["']|["']$/g, "").trim() : null;
     this.bucket = options.bucket || process.env.SUPABASE_STORAGE_BUCKET || "evidence";
 
     if (this.url && this.key) {
-      this.client = createClient(this.url, this.key, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
+      try {
+        this.client = createClient(this.url, this.key, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+      } catch (err) {
+        console.warn("[SupabaseStorage createClient warning]:", err.message);
+        this.client = null;
+      }
     } else {
       this.client = null;
     }

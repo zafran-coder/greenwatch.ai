@@ -1,10 +1,19 @@
 import { createClient } from "@supabase/supabase-js";
 import { config } from "../config.js";
 
-export const supabase =
-  config.supabase.url && config.supabase.anonKey
-    ? createClient(config.supabase.url, config.supabase.anonKey)
-    : null;
+function getSafeSupabaseClient() {
+  const url = config.supabase.url;
+  const key = config.supabase.anonKey;
+  if (!url || !key) return null;
+  try {
+    return createClient(url, key);
+  } catch (err) {
+    console.warn("[supabase.js createClient warning]:", err.message);
+    return null;
+  }
+}
+
+export const supabase = getSafeSupabaseClient();
 
 /**
  * Check connectivity to Supabase project.
