@@ -1,15 +1,26 @@
-import { PrismaClient } from "@prisma/client";
 import { config } from "../config.js";
 import { supabase, checkSupabaseConnection } from "../lib/supabase.js";
 import { SEED_USERS, SEED_REPORTS } from "./seedData.js";
 
-export const prisma = new PrismaClient();
+export let prisma = null;
+try {
+  const prismaPkg = await import("@prisma/client");
+  if (prismaPkg && prismaPkg.PrismaClient) {
+    prisma = new prismaPkg.PrismaClient();
+  }
+} catch (_) {
+  // Prisma is optional in serverless; Supabase and inMemoryDb provide full persistence
+}
 
 let isPrismaConnected = false;
 let isSupabaseActive = false;
 
 // Attempt initial connection to Prisma in the background
 async function checkPrismaConnection() {
+  if (!prisma) {
+    isPrismaConnected = false;
+    return;
+  }
   try {
     await prisma.$connect();
     isPrismaConnected = true;
