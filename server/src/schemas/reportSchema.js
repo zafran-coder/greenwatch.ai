@@ -37,7 +37,25 @@ export const createReportSchema = z.object({
     lat: z.number().nullable().optional(),
     lng: z.number().nullable().optional(),
   }),
-  photos: z.array(z.string()).optional().default([]),
+  photos: z
+    .array(z.string())
+    .or(
+      z.string().transform((s) => {
+        try {
+          const parsed = JSON.parse(s);
+          return Array.isArray(parsed) ? parsed : [s];
+        } catch {
+          return s ? [s] : [];
+        }
+      })
+    )
+    .optional()
+    .default([]),
+  // Honeypot fields for anti-spam detection
+  hp: z.string().optional(),
+  website: z.string().optional(),
+  honeypot: z.string().optional(),
+  _hp: z.string().optional(),
 });
 
 export const updateReportSchema = z.object({
@@ -45,20 +63,38 @@ export const updateReportSchema = z.object({
   priority: z.enum(["High", "Medium", "Low"]).optional(),
   department: z.enum(["Sanitation", "Parks & Forestry", "Water Utility", "Public Works"]).optional(),
   assignee: z.string().nullable().optional(),
+  assignedUserId: z.string().nullable().optional(),
+  dueDate: z.string().or(z.date()).optional(),
+  slaDueAt: z.string().or(z.date()).optional(),
   note: z.string().trim().optional(),
   activityEntry: z
     .object({
       kind: z.enum(["agent", "human"]).default("human"),
-      who: z.string(),
+      who: z.string().optional(),
       text: z.string(),
+      isInternal: z.boolean().optional(),
     })
     .optional(),
 });
 
+export const updateStatusSchema = z.object({
+  status: z.enum(["New", "Verified", "Assigned", "In Progress", "Resolved"]),
+  note: z.string().trim().optional(),
+});
+
+export const updateWorkOrderSchema = z.object({
+  assignee: z.string().nullable().optional(),
+  assignedUserId: z.string().nullable().optional(),
+  dueDate: z.string().or(z.date()).optional(),
+  slaDueAt: z.string().or(z.date()).optional(),
+  note: z.string().trim().optional(),
+});
+
 export const addActivitySchema = z.object({
   kind: z.enum(["agent", "human"]).default("human"),
-  who: z.string().min(1, "Author name/role is required"),
+  who: z.string().optional(),
   text: z.string().trim().min(1, "Activity text cannot be empty"),
+  isInternal: z.boolean().optional().default(true),
 });
 
 export const reportQuerySchema = z.object({
@@ -67,6 +103,8 @@ export const reportQuerySchema = z.object({
   priority: z.string().optional(),
   department: z.string().optional(),
   q: z.string().optional(),
+  sortBy: z.enum(["createdAt", "dueDate", "slaDueAt", "priority", "status"]).optional().default("createdAt"),
+  sortOrder: z.enum(["asc", "desc"]).optional().default("desc"),
   page: z.coerce.number().int().positive().optional().default(1),
   limit: z.coerce.number().int().positive().max(100).optional().default(50),
 });

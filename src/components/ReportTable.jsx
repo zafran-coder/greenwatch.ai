@@ -6,9 +6,13 @@ import CategoryIcon from "./CategoryIcon";
 import { ageOf, isOverdue } from "../utils/format";
 
 /** Reports list — a real table on desktop, stacked cards on mobile. */
-export default function ReportTable({ reports }) {
+export default function ReportTable({ reports = [] }) {
   const navigate = useNavigate();
   const open = (id) => navigate(`/reports/${id}`);
+
+  const getCategoryLabel = (category) =>
+    CATEGORIES[category]?.label ||
+    (category ? category.charAt(0).toUpperCase() + category.slice(1) : "Issue");
 
   return (
     <>
@@ -41,12 +45,21 @@ export default function ReportTable({ reports }) {
                 </td>
                 <td className="px-5 py-4">
                   <span className="flex items-center gap-2.5 text-sm text-slate-700">
-                    <CategoryIcon category={r.category} size="sm" />
-                    {CATEGORIES[r.category].label}
+                    {r.photos && r.photos.length > 0 ? (
+                      <img
+                        src={r.photos[0]}
+                        alt="Photo"
+                        className="size-7 rounded-lg border border-slate-200 object-cover shrink-0 shadow-xs"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <CategoryIcon category={r.category} size="sm" />
+                    )}
+                    {getCategoryLabel(r.category)}
                   </span>
                 </td>
                 <td className="max-w-[220px] truncate px-5 py-4 text-sm text-slate-500">
-                  {r.location.address}
+                  {r.location?.address || "Reported location"}
                 </td>
                 <td className="px-5 py-4">
                   <PriorityBadge value={r.priority} />
@@ -57,7 +70,14 @@ export default function ReportTable({ reports }) {
                 <td className="px-5 py-4">
                   <span className="flex items-center gap-1.5">
                     <StatusBadge value={r.status} />
-                    {isOverdue(r) && <OverdueTag days={Math.max(1, Math.round((Date.now() - new Date(r.dueDate)) / 864e5))} />}
+                    {isOverdue(r) && (
+                      <OverdueTag
+                        days={Math.max(
+                          1,
+                          Math.round((Date.now() - new Date(r.dueDate || r.slaDueAt)) / 864e5)
+                        )}
+                      />
+                    )}
                   </span>
                 </td>
                 <td className="px-5 py-4 text-sm tabular-nums text-slate-500">
@@ -80,7 +100,16 @@ export default function ReportTable({ reports }) {
             onClick={() => open(r.id)}
             className="flex w-full items-start gap-3 px-4 py-4 text-left transition-colors active:bg-green-50/50"
           >
-            <CategoryIcon category={r.category} />
+            {r.photos && r.photos.length > 0 ? (
+              <img
+                src={r.photos[0]}
+                alt="Photo"
+                className="size-10 rounded-xl border border-slate-200 object-cover shrink-0 shadow-xs"
+                loading="lazy"
+              />
+            ) : (
+              <CategoryIcon category={r.category} />
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-slate-900">
@@ -91,15 +120,22 @@ export default function ReportTable({ reports }) {
                 </span>
               </div>
               <p className="mt-0.5 truncate text-sm text-slate-600">
-                {CATEGORIES[r.category].label}
+                {getCategoryLabel(r.category)}
               </p>
               <p className="truncate text-xs text-slate-400">
-                {r.location.address}
+                {r.location?.address || "Reported location"}
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <PriorityBadge value={r.priority} />
                 <StatusBadge value={r.status} />
-                {isOverdue(r) && <OverdueTag days={Math.max(1, Math.round((Date.now() - new Date(r.dueDate)) / 864e5))} />}
+                {isOverdue(r) && (
+                  <OverdueTag
+                    days={Math.max(
+                      1,
+                      Math.round((Date.now() - new Date(r.dueDate || r.slaDueAt)) / 864e5)
+                    )}
+                  />
+                )}
               </div>
             </div>
             <ChevronRight className="mt-1 size-4 shrink-0 text-slate-300" />

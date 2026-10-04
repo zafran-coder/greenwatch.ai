@@ -43,8 +43,14 @@ export class NotFoundError extends AppError {
 }
 
 export class ConflictError extends AppError {
-  constructor(message = "Resource already exists", details = undefined) {
-    super(message, 409, "CONFLICT", details);
+  constructor(message = "Resource already exists", details = undefined, code = "CONFLICT") {
+    super(message, 409, code, details);
+  }
+}
+
+export class IllegalTransitionError extends AppError {
+  constructor(message = "Illegal status transition", details = undefined) {
+    super(message, 409, "ILLEGAL_STATUS_TRANSITION", details);
   }
 }
 

@@ -87,46 +87,62 @@ cd ..
 
 ### 3. Environment Configuration
 
-Frontend `.env`:
+Frontend `.env` (the only frontend variable):
 ```env
-VITE_SUPABASE_URL=https://kbrwjxonrllfysjorzvz.supabase.co
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key_here
+# In development, leave blank to use Vite proxy (/api -> http://localhost:4000)
+# In production, set to your backend API URL
+VITE_API_URL=
 ```
 
 Backend `server/.env`:
-```env
-PORT=4000
-NODE_ENV=development
-CORS_ORIGIN=http://localhost:5173
+See `server/.env.example` for all configurable variables.
 
-SUPABASE_URL=https://kbrwjxonrllfysjorzvz.supabase.co
-SUPABASE_ANON_KEY=your_supabase_anon_key_here
+#### Environment Variables Reference
 
-JWT_SECRET=greenwatch_jwt_secret_dev_key_at_least_32_characters_long
-JWT_EXPIRES_IN=7d
+**Backend (`server/.env` / Render Web Service):**
+| Variable | Required | Default / Example | Purpose |
+|---|---|---|---|
+| `PORT` | No | `4000` | Port for Express HTTP listener |
+| `NODE_ENV` | Yes | `development` / `production` | Runtime mode |
+| `FRONTEND_URL` | Production | `https://your-app.onrender.com` | Allowed CORS origins (comma-separated) |
+| `COOKIE_SECRET` | Yes | random 32-char string | Cookie signing secret |
+| `DATABASE_URL` | Optional | `postgresql://...` | Direct PostgreSQL connection string |
+| `SUPABASE_URL` | Yes | `https://[ref].supabase.co` | Supabase project URL |
+| `SUPABASE_ANON_KEY` | Yes | `eyJ...` | Supabase anonymous API key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Recommended | `eyJ...` | Supabase service-role secret key |
+| `SUPABASE_STORAGE_BUCKET`| No | `evidence` | Evidence photos storage bucket |
+| `STORAGE_DRIVER` | No | `supabase` (or `local`) | Active storage backend |
+| `JWT_SECRET` | Yes | random 32-char string | Admin auth token secret |
+| `ADMIN_EMAIL` | Yes | `admin@greenwatch.gov` | Official admin email |
+| `ADMIN_PASSWORD` | Yes | Secure password | Official admin password |
+| `CRON_SECRET` | Yes | Random secret string | Protects `/api/jobs/run` |
+| `GEMINI_API_KEY` | Optional | `AIza...` | Google Gemini multimodal API key |
+
+**Frontend (`.env` / Render Static Site):**
+| Variable | Required | Purpose |
+|---|---|---|
+| `VITE_API_URL` | Production only | Backend API base URL (e.g. `https://greenwatch-api.onrender.com`) |
+
+### 4. Database Setup & Seed
+
+1. Run the database migration script [supabase_schema.sql](supabase_schema.sql) in your Supabase SQL editor.
+2. Run the idempotent seed once:
+```bash
+npm run seed
 ```
 
-### 4. Database Setup (Supabase)
+### 5. Running the Application Locally
 
-Run the included [supabase_schema.sql](supabase_schema.sql) in your [Supabase SQL Editor](https://supabase.com/dashboard):
-- Creates `reports`, `users`, and `work_orders` tables with Row Level Security.
-- Creates public Storage bucket `evidence`.
-- Seeds 12 initial municipal reports and official department accounts.
-
-### 5. Running the Application
-
-In terminal 1 (Backend API):
 ```bash
+# Terminal 1: Backend API
 cd server
 npm run dev
-# Server runs on http://localhost:4000
+
+# Terminal 2: Frontend App
+npm run dev
 ```
 
-In terminal 2 (Frontend App):
-```bash
-npm run dev
-# Frontend runs on http://localhost:5173
-```
+For production deployment instructions on Render, see [DEPLOY.md](DEPLOY.md).
 
 ---
 

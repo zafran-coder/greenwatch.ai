@@ -39,6 +39,13 @@ CREATE TABLE IF NOT EXISTS public.users (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Ensure all columns exist even if users table was previously initialized
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'OFFICIAL';
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS department TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now();
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
 -- -----------------------------------------------------------------------------
 -- 2. REPORTS TABLE
 -- -----------------------------------------------------------------------------
@@ -90,42 +97,81 @@ CREATE TABLE IF NOT EXISTS public.work_orders (
 );
 
 -- -----------------------------------------------------------------------------
--- 4. ROW LEVEL SECURITY (RLS) POLICIES
--- Enables anonymous citizen reports + tracking, and official dashboard management
+-- 4. PHOTOS TABLE (Evidence Photos with Analysis Metadata)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.photos (
+  id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL REFERENCES public.reports(id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  url TEXT NOT NULL,
+  thumbnail_path TEXT,
+  thumbnail_url TEXT,
+  size INTEGER NOT NULL DEFAULT 0,
+  width INTEGER NOT NULL DEFAULT 0,
+  height INTEGER NOT NULL DEFAULT 0,
+  evidence_analysis JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS thumbnail_path TEXT;
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS thumbnail_url TEXT;
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS size INTEGER DEFAULT 0;
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS width INTEGER DEFAULT 0;
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS height INTEGER DEFAULT 0;
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS evidence_analysis JSONB DEFAULT '{}'::jsonb;
+
+CREATE INDEX IF NOT EXISTS idx_photos_report_id ON public.photos(report_id);
+CREATE INDEX IF NOT EXISTS idx_photos_created_at ON public.photos(created_at DESC);
+
+-- -----------------------------------------------------------------------------
+-- 5. ROW LEVEL SECURITY (RLS) POLICIES
+-- Strict Security: NO public/anon policies. All direct client access denied.
+-- Only the Express server (service_role / direct DB connection) accesses data.
 -- -----------------------------------------------------------------------------
 ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.work_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.photos ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Public full access to reports" ON public.reports;
-CREATE POLICY "Public full access to reports" ON public.reports
-  FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Anonymous can insert reports" ON public.reports;
+DROP POLICY IF EXISTS "Public can view reports" ON public.reports;
+DROP POLICY IF EXISTS "Authenticated can update reports" ON public.reports;
 
 DROP POLICY IF EXISTS "Public full access to users" ON public.users;
-CREATE POLICY "Public full access to users" ON public.users
-  FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Authenticated can view users" ON public.users;
 
 DROP POLICY IF EXISTS "Public full access to work_orders" ON public.work_orders;
-CREATE POLICY "Public full access to work_orders" ON public.work_orders
-  FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Public can view work_orders" ON public.work_orders;
+DROP POLICY IF EXISTS "Authenticated can manage work_orders" ON public.work_orders;
+
+DROP POLICY IF EXISTS "Public full access to photos" ON public.photos;
 
 -- -----------------------------------------------------------------------------
--- 5. STORAGE BUCKET FOR EVIDENCE PHOTOS
+-- 6. STORAGE BUCKET FOR EVIDENCE PHOTOS
+-- Private bucket with no anon listing or public policies
 -- -----------------------------------------------------------------------------
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('evidence', 'evidence', true)
-ON CONFLICT (id) DO NOTHING;
+DO $$
+BEGIN
+  INSERT INTO storage.buckets (id, name, public)
+  VALUES ('evidence', 'evidence', false)
+  ON CONFLICT (id) DO UPDATE SET public = false;
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE NOTICE 'Notice: storage.buckets already configured or handled by Supabase Storage.';
+END $$;
 
-DROP POLICY IF EXISTS "Public read from evidence bucket" ON storage.objects;
-CREATE POLICY "Public read from evidence bucket" ON storage.objects
-  FOR SELECT USING (bucket_id = 'evidence');
-
-DROP POLICY IF EXISTS "Public upload to evidence bucket" ON storage.objects;
-CREATE POLICY "Public upload to evidence bucket" ON storage.objects
-  FOR INSERT WITH CHECK (bucket_id = 'evidence');
+DO $$
+BEGIN
+  DROP POLICY IF EXISTS "Public read from evidence bucket" ON storage.objects;
+  DROP POLICY IF EXISTS "Public upload to evidence bucket" ON storage.objects;
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE NOTICE 'Notice: storage.objects policies updated.';
+END $$;
 
 -- -----------------------------------------------------------------------------
--- 6. SEED USERS
+-- 7. SEED USERS
 -- -----------------------------------------------------------------------------
 `;
 
@@ -133,6 +179,8 @@ for (const u of SEED_USERS) {
   sql += `INSERT INTO public.users (id, email, password_hash, name, role, department)
 VALUES (${escapeSql(u.id)}, ${escapeSql(u.email)}, ${escapeSql(u.passwordHash)}, ${escapeSql(u.name)}, ${escapeSql(u.role)}, ${escapeSql(u.department)})
 ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  password_hash = EXCLUDED.password_hash,
   name = EXCLUDED.name,
   role = EXCLUDED.role,
   department = EXCLUDED.department;
@@ -141,7 +189,7 @@ ON CONFLICT (id) DO UPDATE SET
 
 sql += `
 -- -----------------------------------------------------------------------------
--- 7. SEED REPORTS (Initial 12 Municipal Reports)
+-- 8. SEED REPORTS (Initial 12 Municipal Reports)
 -- -----------------------------------------------------------------------------
 `;
 

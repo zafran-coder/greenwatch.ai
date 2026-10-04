@@ -1,9 +1,8 @@
 import { useRef, useState } from "react";
 import { ImagePlus, X, Loader2 } from "lucide-react";
 import { useToast } from "./Toast";
-import { uploadEvidencePhoto } from "../lib/supabase";
 
-/** photos: [{ id, url, isUploading? }] — object URLs or Supabase public URLs */
+/** photos: [{ id, url, isUploading? }] — object URLs or server evidence URLs */
 export default function PhotoUploader({ photos, setPhotos, max = 3 }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -23,37 +22,11 @@ export default function PhotoUploader({ photos, setPhotos, max = 3 }) {
       id: `${Date.now()}-${f.name}-${Math.random().toString(36).slice(2, 7)}`,
       url: URL.createObjectURL(f),
       file: f,
-      isUploading: true,
+      isUploading: false,
     }));
 
     if (newItems.length) {
       setPhotos((prev) => [...prev, ...newItems]);
-
-      // Upload to Supabase Storage asynchronously
-      newItems.forEach(async (item) => {
-        try {
-          const publicUrl = await uploadEvidencePhoto(item.file);
-          if (publicUrl) {
-            setPhotos((current) =>
-              current.map((p) =>
-                p.id === item.id ? { ...p, url: publicUrl, isUploading: false } : p
-              )
-            );
-          } else {
-            setPhotos((current) =>
-              current.map((p) =>
-                p.id === item.id ? { ...p, isUploading: false } : p
-              )
-            );
-          }
-        } catch (err) {
-          setPhotos((current) =>
-            current.map((p) =>
-              p.id === item.id ? { ...p, isUploading: false } : p
-            )
-          );
-        }
-      });
     }
   };
 

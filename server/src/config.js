@@ -5,7 +5,13 @@ dotenv.config();
 export const config = {
   port: parseInt(process.env.PORT || "4000", 10),
   nodeEnv: process.env.NODE_ENV || "development",
-  corsOrigin: process.env.CORS_ORIGIN || "http://localhost:5173",
+  corsOrigin: process.env.FRONTEND_URL || process.env.CORS_ORIGIN || "http://localhost:5173",
+  cookieSecret:
+    process.env.COOKIE_SECRET || "greenwatch_cookie_secret_secure_signing_key_32chars",
+  admin: {
+    email: process.env.ADMIN_EMAIL || "admin@greenwatch.gov",
+    password: process.env.ADMIN_PASSWORD || null,
+  },
   databaseUrl:
     process.env.DATABASE_URL ||
     "postgresql://greenwatch:greenwatch_secret@localhost:5432/greenwatch_db?schema=public",
@@ -15,11 +21,16 @@ export const config = {
   },
   ai: {
     geminiApiKey: process.env.GEMINI_API_KEY || null,
+    geminiModel: process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
   },
+  cronSecret: process.env.CRON_SECRET || "greenwatch_cron_secret",
   supabase: {
-    url: process.env.SUPABASE_URL || "https://kbrwjxonrllfysjorzvz.supabase.co",
-    anonKey:
-      process.env.SUPABASE_ANON_KEY ||
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImticndqeG9ucmxsZnlzam9yenZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEwMTY5NTIsImV4cCI6MjEwNjU5Mjk1Mn0.foPpz2s69djxIAoxwb5XYvjOTuUj5RP_I9BlkEyOpa4",
+    url: process.env.SUPABASE_URL || null,
+    anonKey: process.env.SUPABASE_ANON_KEY || null,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || null,
+    bucket: process.env.SUPABASE_STORAGE_BUCKET || "evidence",
+  },
+  storage: {
+    driver: process.env.STORAGE_DRIVER || "supabase",
   },
 };

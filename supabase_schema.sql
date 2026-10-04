@@ -21,6 +21,13 @@ CREATE TABLE IF NOT EXISTS public.users (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Ensure all columns exist even if users table was previously initialized
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'OFFICIAL';
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS department TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now();
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
 -- -----------------------------------------------------------------------------
 -- 2. REPORTS TABLE
 -- -----------------------------------------------------------------------------
@@ -72,100 +79,225 @@ CREATE TABLE IF NOT EXISTS public.work_orders (
 );
 
 -- -----------------------------------------------------------------------------
--- 4. ROW LEVEL SECURITY (RLS) POLICIES
--- Enables anonymous citizen reports + tracking, and official dashboard management
+-- 4. PHOTOS TABLE (Evidence Photos with Analysis Metadata)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.photos (
+  id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL REFERENCES public.reports(id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  url TEXT NOT NULL,
+  thumbnail_path TEXT,
+  thumbnail_url TEXT,
+  size INTEGER NOT NULL DEFAULT 0,
+  width INTEGER NOT NULL DEFAULT 0,
+  height INTEGER NOT NULL DEFAULT 0,
+  evidence_analysis JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS thumbnail_path TEXT;
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS thumbnail_url TEXT;
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS size INTEGER DEFAULT 0;
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS width INTEGER DEFAULT 0;
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS height INTEGER DEFAULT 0;
+ALTER TABLE public.photos ADD COLUMN IF NOT EXISTS evidence_analysis JSONB DEFAULT '{}'::jsonb;
+
+CREATE INDEX IF NOT EXISTS idx_photos_report_id ON public.photos(report_id);
+CREATE INDEX IF NOT EXISTS idx_photos_created_at ON public.photos(created_at DESC);
+
+-- -----------------------------------------------------------------------------
+-- 5. AGENT RUNS TABLE (Telemetry & Progress Tracking)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.agent_runs (
+  id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL REFERENCES public.reports(id) ON DELETE CASCADE,
+  agent_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'completed', -- 'completed' | 'fallback' | 'failed'
+  duration_ms INTEGER DEFAULT 0,
+  provider TEXT NOT NULL DEFAULT 'fallback', -- 'gemini' | 'fallback'
+  fallback_reason TEXT,
+  input JSONB,
+  output JSONB,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.agent_runs ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'fallback';
+ALTER TABLE public.agent_runs ADD COLUMN IF NOT EXISTS fallback_reason TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_report_id ON public.agent_runs(report_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_created_at ON public.agent_runs(created_at DESC);
+
+-- Sequences for short collision-safe references: GW-XXXX and WO-XXXX
+CREATE SEQUENCE IF NOT EXISTS report_ref_seq START WITH 2046;
+CREATE SEQUENCE IF NOT EXISTS work_order_ref_seq START WITH 1198;
+
+-- -----------------------------------------------------------------------------
+-- 6. DUPLICATE LINKS TABLE (Cross-referenced Proximate Reports)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.duplicate_links (
+  id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL REFERENCES public.reports(id) ON DELETE CASCADE,
+  target_report_id TEXT NOT NULL REFERENCES public.reports(id) ON DELETE CASCADE,
+  similarity_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+  distance_meters DOUBLE PRECISION,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_duplicate_links_report_id ON public.duplicate_links(report_id);
+CREATE INDEX IF NOT EXISTS idx_duplicate_links_target ON public.duplicate_links(target_report_id);
+
+-- -----------------------------------------------------------------------------
+-- 7. FOLLOW UPS TABLE (Citizen Verification & Closed-Loop Auditing)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.follow_ups (
+  id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL REFERENCES public.reports(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'confirmed' | 'reopened'
+  confirmed BOOLEAN,
+  comment TEXT,
+  resolved_at TIMESTAMPTZ,
+  verified_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_follow_ups_report_id ON public.follow_ups(report_id);
+
+-- -----------------------------------------------------------------------------
+-- 8. ROW LEVEL SECURITY (RLS) POLICIES
+-- Strict Security: NO public/anon policies. All direct client access denied.
+-- Only the Express server (service_role / direct DB connection) accesses data.
 -- -----------------------------------------------------------------------------
 ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.work_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.photos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.agent_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.duplicate_links ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.follow_ups ENABLE ROW LEVEL SECURITY;
 
+-- Drop all historical public / anon policies on all tables
 DROP POLICY IF EXISTS "Public full access to reports" ON public.reports;
-CREATE POLICY "Public full access to reports" ON public.reports
-  FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Public full access to users" ON public.users;
-CREATE POLICY "Public full access to users" ON public.users
-  FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Anonymous can insert reports" ON public.reports;
+DROP POLICY IF EXISTS "Public can view reports" ON public.reports;
+DROP POLICY IF EXISTS "Authenticated can update reports" ON public.reports;
 
 DROP POLICY IF EXISTS "Public full access to work_orders" ON public.work_orders;
-CREATE POLICY "Public full access to work_orders" ON public.work_orders
-  FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Public can view work_orders" ON public.work_orders;
+DROP POLICY IF EXISTS "Authenticated can manage work_orders" ON public.work_orders;
+
+DROP POLICY IF EXISTS "Public full access to photos" ON public.photos;
+DROP POLICY IF EXISTS "Public full access to agent_runs" ON public.agent_runs;
+DROP POLICY IF EXISTS "Public full access to duplicate_links" ON public.duplicate_links;
+DROP POLICY IF EXISTS "Public full access to follow_ups" ON public.follow_ups;
+
+DROP POLICY IF EXISTS "Public full access to users" ON public.users;
+DROP POLICY IF EXISTS "Authenticated can view users" ON public.users;
+
+-- No public policies created. All direct anon SELECT/INSERT/UPDATE/DELETE are blocked.
 
 -- -----------------------------------------------------------------------------
--- 5. STORAGE BUCKET FOR EVIDENCE PHOTOS
+-- 6. STORAGE BUCKET FOR EVIDENCE PHOTOS
+-- Private bucket with no anon listing or public policies
 -- -----------------------------------------------------------------------------
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('evidence', 'evidence', true)
-ON CONFLICT (id) DO NOTHING;
+DO $$
+BEGIN
+  INSERT INTO storage.buckets (id, name, public)
+  VALUES ('evidence', 'evidence', false)
+  ON CONFLICT (id) DO UPDATE SET public = false;
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE NOTICE 'Notice: storage.buckets already configured or handled by Supabase Storage.';
+END $$;
 
-DROP POLICY IF EXISTS "Public read from evidence bucket" ON storage.objects;
-CREATE POLICY "Public read from evidence bucket" ON storage.objects
-  FOR SELECT USING (bucket_id = 'evidence');
-
-DROP POLICY IF EXISTS "Public upload to evidence bucket" ON storage.objects;
-CREATE POLICY "Public upload to evidence bucket" ON storage.objects
-  FOR INSERT WITH CHECK (bucket_id = 'evidence');
+DO $$
+BEGIN
+  DROP POLICY IF EXISTS "Public read from evidence bucket" ON storage.objects;
+  DROP POLICY IF EXISTS "Public upload to evidence bucket" ON storage.objects;
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE NOTICE 'Notice: storage.objects policies updated.';
+END $$;
 
 -- -----------------------------------------------------------------------------
--- 6. SEED USERS
+-- 7. SEED USERS
 -- -----------------------------------------------------------------------------
 INSERT INTO public.users (id, email, password_hash, name, role, department)
 VALUES ('u-admin', 'admin@greenwatch.gov', '$2b$10$FLiVrw6fJ6VtXMQg2IYiZOtTdKBVsFmdksV9yqii2zGtzur0kSt5K', 'City Operations Admin', 'ADMIN', NULL)
 ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  password_hash = EXCLUDED.password_hash,
   name = EXCLUDED.name,
   role = EXCLUDED.role,
   department = EXCLUDED.department;
 INSERT INTO public.users (id, email, password_hash, name, role, department)
 VALUES ('u-alvarez', 'm.alvarez@greenwatch.gov', '$2b$10$FLiVrw6fJ6VtXMQg2IYiZOtTdKBVsFmdksV9yqii2zGtzur0kSt5K', 'M. Alvarez', 'OFFICIAL', 'Sanitation')
 ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  password_hash = EXCLUDED.password_hash,
   name = EXCLUDED.name,
   role = EXCLUDED.role,
   department = EXCLUDED.department;
 INSERT INTO public.users (id, email, password_hash, name, role, department)
 VALUES ('u-chen', 's.chen@greenwatch.gov', '$2b$10$FLiVrw6fJ6VtXMQg2IYiZOtTdKBVsFmdksV9yqii2zGtzur0kSt5K', 'S. Chen', 'OFFICIAL', 'Sanitation')
 ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  password_hash = EXCLUDED.password_hash,
   name = EXCLUDED.name,
   role = EXCLUDED.role,
   department = EXCLUDED.department;
 INSERT INTO public.users (id, email, password_hash, name, role, department)
 VALUES ('u-okafor', 'j.okafor@greenwatch.gov', '$2b$10$FLiVrw6fJ6VtXMQg2IYiZOtTdKBVsFmdksV9yqii2zGtzur0kSt5K', 'J. Okafor', 'OFFICIAL', 'Parks & Forestry')
 ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  password_hash = EXCLUDED.password_hash,
   name = EXCLUDED.name,
   role = EXCLUDED.role,
   department = EXCLUDED.department;
 INSERT INTO public.users (id, email, password_hash, name, role, department)
 VALUES ('u-novak', 'l.novak@greenwatch.gov', '$2b$10$FLiVrw6fJ6VtXMQg2IYiZOtTdKBVsFmdksV9yqii2zGtzur0kSt5K', 'L. Novak', 'OFFICIAL', 'Parks & Forestry')
 ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  password_hash = EXCLUDED.password_hash,
   name = EXCLUDED.name,
   role = EXCLUDED.role,
   department = EXCLUDED.department;
 INSERT INTO public.users (id, email, password_hash, name, role, department)
 VALUES ('u-kapoor', 'r.kapoor@greenwatch.gov', '$2b$10$FLiVrw6fJ6VtXMQg2IYiZOtTdKBVsFmdksV9yqii2zGtzur0kSt5K', 'R. Kapoor', 'OFFICIAL', 'Water Utility')
 ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  password_hash = EXCLUDED.password_hash,
   name = EXCLUDED.name,
   role = EXCLUDED.role,
   department = EXCLUDED.department;
 INSERT INTO public.users (id, email, password_hash, name, role, department)
 VALUES ('u-nguyen', 't.nguyen@greenwatch.gov', '$2b$10$FLiVrw6fJ6VtXMQg2IYiZOtTdKBVsFmdksV9yqii2zGtzur0kSt5K', 'T. Nguyen', 'OFFICIAL', 'Water Utility')
 ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  password_hash = EXCLUDED.password_hash,
   name = EXCLUDED.name,
   role = EXCLUDED.role,
   department = EXCLUDED.department;
 INSERT INTO public.users (id, email, password_hash, name, role, department)
 VALUES ('u-petrova', 'd.petrova@greenwatch.gov', '$2b$10$FLiVrw6fJ6VtXMQg2IYiZOtTdKBVsFmdksV9yqii2zGtzur0kSt5K', 'D. Petrova', 'OFFICIAL', 'Public Works')
 ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  password_hash = EXCLUDED.password_hash,
   name = EXCLUDED.name,
   role = EXCLUDED.role,
   department = EXCLUDED.department;
 INSERT INTO public.users (id, email, password_hash, name, role, department)
 VALUES ('u-mensah', 'a.mensah@greenwatch.gov', '$2b$10$FLiVrw6fJ6VtXMQg2IYiZOtTdKBVsFmdksV9yqii2zGtzur0kSt5K', 'A. Mensah', 'OFFICIAL', 'Public Works')
 ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  password_hash = EXCLUDED.password_hash,
   name = EXCLUDED.name,
   role = EXCLUDED.role,
   department = EXCLUDED.department;
 
 -- -----------------------------------------------------------------------------
--- 7. SEED REPORTS (Initial 12 Municipal Reports)
+-- 8. SEED REPORTS (Initial 12 Municipal Reports)
 -- -----------------------------------------------------------------------------
 INSERT INTO public.reports (
   id, ref, category, description, address, area, lat, lng,
@@ -184,14 +316,14 @@ INSERT INTO public.reports (
   'In Progress',
   'Sanitation',
   'M. Alvarez',
-  '2026-10-03T04:02:56.121Z',
+  '2026-10-03T05:59:01.352Z',
   NULL,
   'WO-1187',
   '["/src/assets/garbage.jpg"]'::jsonb,
   '{"severity":"High","reason":"Public health and environmental risk","evidence":"Good","confidence":94,"similar":{"count":2,"ids":["r8"]}}'::jsonb,
-  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Illegal Garbage Dumping (94% confidence).","at":"2026-09-30T06:02:56.121Z"},{"kind":"agent","who":"Evidence Agent","text":"1 photo verified, matches the report. Evidence quality: Good.","at":"2026-09-30T07:02:56.121Z"},{"kind":"agent","who":"Duplicate Detection","text":"2 similar reports found in this area. Linked, not merged.","at":"2026-09-30T07:02:56.121Z"},{"kind":"agent","who":"Priority Agent","text":"Priority set to High — public health and environmental risk.","at":"2026-09-30T07:02:56.121Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Sanitation. Work order WO-1187 created.","at":"2026-09-30T07:02:56.121Z"},{"kind":"human","who":"M. Alvarez","text":"Crew scheduled for tomorrow morning.","at":"2026-10-02T14:02:56.121Z"},{"kind":"agent","who":"Follow-up Agent","text":"Update requested from the Sanitation team — report is past its due date.","at":"2026-10-03T04:02:56.121Z"}]'::jsonb,
-  '2026-09-30T06:02:56.120Z',
-  '2026-10-03T04:02:56.121Z'
+  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Illegal Garbage Dumping (94% confidence).","at":"2026-09-30T07:59:01.352Z"},{"kind":"agent","who":"Evidence Agent","text":"1 photo verified, matches the report. Evidence quality: Good.","at":"2026-09-30T08:59:01.352Z"},{"kind":"agent","who":"Duplicate Detection","text":"2 similar reports found in this area. Linked, not merged.","at":"2026-09-30T08:59:01.352Z"},{"kind":"agent","who":"Priority Agent","text":"Priority set to High — public health and environmental risk.","at":"2026-09-30T08:59:01.352Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Sanitation. Work order WO-1187 created.","at":"2026-09-30T08:59:01.352Z"},{"kind":"human","who":"M. Alvarez","text":"Crew scheduled for tomorrow morning.","at":"2026-10-02T15:59:01.352Z"},{"kind":"agent","who":"Follow-up Agent","text":"Update requested from the Sanitation team — report is past its due date.","at":"2026-10-03T05:59:01.352Z"}]'::jsonb,
+  '2026-09-30T07:59:01.351Z',
+  '2026-10-03T05:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -215,14 +347,14 @@ INSERT INTO public.reports (
   'Verified',
   'Sanitation',
   NULL,
-  '2026-10-05T10:02:56.121Z',
+  '2026-10-05T11:59:01.352Z',
   NULL,
   'WO-1191',
   '["/src/assets/garbage.jpg"]'::jsonb,
   '{"severity":"Medium","reason":"Waste accumulation in a busy public area","evidence":"Good","confidence":91,"similar":{"count":1,"ids":["r8"]}}'::jsonb,
-  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Illegal Garbage Dumping (91% confidence).","at":"2026-10-02T08:02:56.121Z"},{"kind":"agent","who":"Evidence Agent","text":"Photo verified. Evidence quality: Good.","at":"2026-10-02T08:02:56.121Z"},{"kind":"agent","who":"Priority Agent","text":"Priority set to Medium — no immediate safety risk.","at":"2026-10-02T08:02:56.121Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Sanitation. Work order WO-1191 created, awaiting pickup.","at":"2026-10-02T08:02:56.121Z"}]'::jsonb,
-  '2026-10-02T08:02:56.121Z',
-  '2026-10-02T10:02:56.121Z'
+  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Illegal Garbage Dumping (91% confidence).","at":"2026-10-02T09:59:01.352Z"},{"kind":"agent","who":"Evidence Agent","text":"Photo verified. Evidence quality: Good.","at":"2026-10-02T09:59:01.352Z"},{"kind":"agent","who":"Priority Agent","text":"Priority set to Medium — no immediate safety risk.","at":"2026-10-02T09:59:01.352Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Sanitation. Work order WO-1191 created, awaiting pickup.","at":"2026-10-02T09:59:01.352Z"}]'::jsonb,
+  '2026-10-02T09:59:01.352Z',
+  '2026-10-02T11:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -246,14 +378,14 @@ INSERT INTO public.reports (
   'Assigned',
   'Parks & Forestry',
   'J. Okafor',
-  '2026-10-04T00:02:56.121Z',
+  '2026-10-04T01:59:01.352Z',
   NULL,
   'WO-1192',
   '["/src/assets/tree.jpg"]'::jsonb,
   '{"severity":"High","reason":"Safety hazard near a school crossing","evidence":"Good","confidence":96,"similar":{"count":0,"ids":[]}}'::jsonb,
-  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Fallen / Damaged Tree (96% confidence).","at":"2026-10-02T12:02:56.121Z"},{"kind":"agent","who":"Priority Agent","text":"Priority set to High — safety hazard near a school crossing.","at":"2026-10-02T12:02:56.121Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Parks & Forestry. Work order WO-1192 created.","at":"2026-10-02T12:02:56.121Z"},{"kind":"human","who":"J. Okafor","text":"Arborist crew dispatched, will secure the crossing first.","at":"2026-10-03T06:02:56.121Z"}]'::jsonb,
-  '2026-10-02T12:02:56.121Z',
-  '2026-10-03T06:02:56.121Z'
+  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Fallen / Damaged Tree (96% confidence).","at":"2026-10-02T13:59:01.352Z"},{"kind":"agent","who":"Priority Agent","text":"Priority set to High — safety hazard near a school crossing.","at":"2026-10-02T13:59:01.352Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Parks & Forestry. Work order WO-1192 created.","at":"2026-10-02T13:59:01.352Z"},{"kind":"human","who":"J. Okafor","text":"Arborist crew dispatched, will secure the crossing first.","at":"2026-10-03T07:59:01.352Z"}]'::jsonb,
+  '2026-10-02T13:59:01.352Z',
+  '2026-10-03T07:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -277,14 +409,14 @@ INSERT INTO public.reports (
   'In Progress',
   'Water Utility',
   'R. Kapoor',
-  '2026-10-04T10:02:56.121Z',
+  '2026-10-04T11:59:01.352Z',
   NULL,
   'WO-1189',
   '["/src/assets/water.jpg"]'::jsonb,
   '{"severity":"High","reason":"Active water loss — damage and waste risk","evidence":"Good","confidence":95,"similar":{"count":0,"ids":[]}}'::jsonb,
-  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Water Leakage / Wastage (95% confidence).","at":"2026-10-01T09:02:56.121Z"},{"kind":"agent","who":"Priority Agent","text":"Priority set to High — active water loss.","at":"2026-10-01T09:02:56.121Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Water Utility. Work order WO-1189 created.","at":"2026-10-01T09:02:56.121Z"},{"kind":"human","who":"R. Kapoor","text":"Valve isolated on the north side. Excavation crew on site.","at":"2026-10-03T01:02:56.121Z"}]'::jsonb,
-  '2026-10-01T09:02:56.121Z',
-  '2026-10-03T01:02:56.121Z'
+  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Water Leakage / Wastage (95% confidence).","at":"2026-10-01T10:59:01.352Z"},{"kind":"agent","who":"Priority Agent","text":"Priority set to High — active water loss.","at":"2026-10-01T10:59:01.352Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Water Utility. Work order WO-1189 created.","at":"2026-10-01T10:59:01.352Z"},{"kind":"human","who":"R. Kapoor","text":"Valve isolated on the north side. Excavation crew on site.","at":"2026-10-03T02:59:01.352Z"}]'::jsonb,
+  '2026-10-01T10:59:01.352Z',
+  '2026-10-03T02:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -308,14 +440,14 @@ INSERT INTO public.reports (
   'New',
   'Sanitation',
   NULL,
-  '2026-10-06T10:02:56.121Z',
+  '2026-10-06T11:59:01.352Z',
   NULL,
   'WO-1194',
   '[]'::jsonb,
   '{"severity":"Medium","reason":"Hygiene concern in a children''s play area","evidence":"Needs more info","confidence":82,"similar":{"count":1,"ids":["r11"]}}'::jsonb,
-  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Dirty Park (82% confidence).","at":"2026-10-03T01:02:56.121Z"},{"kind":"agent","who":"Evidence Agent","text":"No photos attached — evidence quality: Needs more info.","at":"2026-10-03T02:02:56.121Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Sanitation. Work order WO-1194 created.","at":"2026-10-03T02:02:56.121Z"}]'::jsonb,
-  '2026-10-03T01:02:56.121Z',
-  '2026-10-03T02:02:56.121Z'
+  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Dirty Park (82% confidence).","at":"2026-10-03T02:59:01.352Z"},{"kind":"agent","who":"Evidence Agent","text":"No photos attached — evidence quality: Needs more info.","at":"2026-10-03T03:59:01.352Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Sanitation. Work order WO-1194 created.","at":"2026-10-03T03:59:01.352Z"}]'::jsonb,
+  '2026-10-03T02:59:01.352Z',
+  '2026-10-03T03:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -339,14 +471,14 @@ INSERT INTO public.reports (
   'New',
   'Public Works',
   NULL,
-  '2026-10-07T10:02:56.121Z',
+  '2026-10-07T11:59:01.352Z',
   NULL,
   'WO-1195',
   '["/src/assets/blocked.jpg"]'::jsonb,
   '{"severity":"Medium","reason":"Public green space inaccessible to residents","evidence":"Needs more info","confidence":78,"similar":{"count":1,"ids":["r12"]}}'::jsonb,
-  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Blocked Green Area (78% confidence).","at":"2026-10-02T19:02:56.121Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Public Works. Work order WO-1195 created.","at":"2026-10-02T19:02:56.121Z"}]'::jsonb,
-  '2026-10-02T19:02:56.121Z',
-  '2026-10-02T19:02:56.121Z'
+  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Blocked Green Area (78% confidence).","at":"2026-10-02T20:59:01.352Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Public Works. Work order WO-1195 created.","at":"2026-10-02T20:59:01.352Z"}]'::jsonb,
+  '2026-10-02T20:59:01.352Z',
+  '2026-10-02T20:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -370,14 +502,14 @@ INSERT INTO public.reports (
   'New',
   'Parks & Forestry',
   NULL,
-  '2026-10-08T10:02:56.121Z',
+  '2026-10-08T11:59:01.352Z',
   NULL,
   'WO-1196',
   '["/src/assets/plants.jpg"]'::jsonb,
   '{"severity":"Low","reason":"Cosmetic damage to maintained greenery","evidence":"Good","confidence":86,"similar":{"count":0,"ids":[]}}'::jsonb,
-  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Damaged Plants (86% confidence).","at":"2026-10-02T05:02:56.121Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Parks & Forestry. Work order WO-1196 created.","at":"2026-10-02T05:02:56.121Z"}]'::jsonb,
-  '2026-10-02T05:02:56.121Z',
-  '2026-10-02T05:02:56.121Z'
+  '[{"kind":"agent","who":"Triage Agent","text":"Classified as Damaged Plants (86% confidence).","at":"2026-10-02T06:59:01.352Z"},{"kind":"agent","who":"Routing Agent","text":"Routed to Parks & Forestry. Work order WO-1196 created.","at":"2026-10-02T06:59:01.352Z"}]'::jsonb,
+  '2026-10-02T06:59:01.352Z',
+  '2026-10-02T06:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -401,14 +533,14 @@ INSERT INTO public.reports (
   'Resolved',
   'Sanitation',
   'S. Chen',
-  '2026-10-05T10:02:56.121Z',
-  '2026-10-03T07:02:56.121Z',
+  '2026-10-05T11:59:01.352Z',
+  '2026-10-03T08:59:01.352Z',
   'WO-1181',
   '["/src/assets/garbage.jpg"]'::jsonb,
   '{"severity":"Medium","reason":"Waste accumulation in a busy public area","evidence":"Good","confidence":92,"similar":{"count":1,"ids":[]}}'::jsonb,
-  '[{"kind":"agent","who":"Routing Agent","text":"Routed to Sanitation. Work order WO-1181 created.","at":"2026-09-27T10:02:56.121Z"},{"kind":"human","who":"S. Chen","text":"Alley cleared and washed. Anti-dumping sign requested.","at":"2026-10-03T05:02:56.121Z"},{"kind":"human","who":"S. Chen","text":"Marked as Resolved.","at":"2026-10-03T07:02:56.121Z"},{"kind":"agent","who":"Follow-up Agent","text":"Citizen notified and asked to confirm the fix.","at":"2026-10-03T07:02:56.121Z"}]'::jsonb,
-  '2026-09-27T10:02:56.121Z',
-  '2026-10-03T07:02:56.121Z'
+  '[{"kind":"agent","who":"Routing Agent","text":"Routed to Sanitation. Work order WO-1181 created.","at":"2026-09-27T11:59:01.352Z"},{"kind":"human","who":"S. Chen","text":"Alley cleared and washed. Anti-dumping sign requested.","at":"2026-10-03T06:59:01.352Z"},{"kind":"human","who":"S. Chen","text":"Marked as Resolved.","at":"2026-10-03T08:59:01.352Z"},{"kind":"agent","who":"Follow-up Agent","text":"Citizen notified and asked to confirm the fix.","at":"2026-10-03T08:59:01.352Z"}]'::jsonb,
+  '2026-09-27T11:59:01.352Z',
+  '2026-10-03T08:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -432,14 +564,14 @@ INSERT INTO public.reports (
   'Resolved',
   'Water Utility',
   'T. Nguyen',
-  '2026-10-04T10:02:56.121Z',
-  '2026-10-03T04:02:56.121Z',
+  '2026-10-04T11:59:01.352Z',
+  '2026-10-03T05:59:01.352Z',
   'WO-1179',
   '["/src/assets/water.jpg"]'::jsonb,
   '{"severity":"Low","reason":"Steady water waste, no damage risk","evidence":"Good","confidence":89,"similar":{"count":0,"ids":[]}}'::jsonb,
-  '[{"kind":"agent","who":"Routing Agent","text":"Routed to Water Utility. Work order WO-1179 created.","at":"2026-09-28T10:02:56.121Z"},{"kind":"human","who":"T. Nguyen","text":"Timer valve replaced. Marked as Resolved.","at":"2026-10-03T04:02:56.121Z"},{"kind":"agent","who":"Follow-up Agent","text":"Citizen notified. No re-report in 24h — loop closed.","at":"2026-10-03T05:02:56.121Z"}]'::jsonb,
-  '2026-09-28T10:02:56.121Z',
-  '2026-10-03T04:02:56.121Z'
+  '[{"kind":"agent","who":"Routing Agent","text":"Routed to Water Utility. Work order WO-1179 created.","at":"2026-09-28T11:59:01.352Z"},{"kind":"human","who":"T. Nguyen","text":"Timer valve replaced. Marked as Resolved.","at":"2026-10-03T05:59:01.352Z"},{"kind":"agent","who":"Follow-up Agent","text":"Citizen notified. No re-report in 24h — loop closed.","at":"2026-10-03T06:59:01.352Z"}]'::jsonb,
+  '2026-09-28T11:59:01.352Z',
+  '2026-10-03T05:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -463,14 +595,14 @@ INSERT INTO public.reports (
   'In Progress',
   'Parks & Forestry',
   'L. Novak',
-  '2026-10-02T10:02:56.121Z',
+  '2026-10-02T11:59:01.352Z',
   NULL,
   'WO-1176',
   '["/src/assets/tree.jpg"]'::jsonb,
   '{"severity":"Medium","reason":"Obstruction risk in a shared public space","evidence":"Good","confidence":90,"similar":{"count":0,"ids":[]}}'::jsonb,
-  '[{"kind":"agent","who":"Routing Agent","text":"Routed to Parks & Forestry. Work order WO-1176 created.","at":"2026-09-29T10:02:56.121Z"},{"kind":"human","who":"L. Novak","text":"Inspected — needs a cherry picker, scheduled this week.","at":"2026-10-01T07:02:56.121Z"},{"kind":"agent","who":"Follow-up Agent","text":"Escalated: no update for 48h and report is past due. Reminder sent to crew supervisor.","at":"2026-10-03T08:02:56.121Z"}]'::jsonb,
-  '2026-09-29T10:02:56.121Z',
-  '2026-10-01T07:02:56.121Z'
+  '[{"kind":"agent","who":"Routing Agent","text":"Routed to Parks & Forestry. Work order WO-1176 created.","at":"2026-09-29T11:59:01.352Z"},{"kind":"human","who":"L. Novak","text":"Inspected — needs a cherry picker, scheduled this week.","at":"2026-10-01T08:59:01.352Z"},{"kind":"agent","who":"Follow-up Agent","text":"Escalated: no update for 48h and report is past due. Reminder sent to crew supervisor.","at":"2026-10-03T09:59:01.352Z"}]'::jsonb,
+  '2026-09-29T11:59:01.352Z',
+  '2026-10-01T08:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -494,14 +626,14 @@ INSERT INTO public.reports (
   'Resolved',
   'Sanitation',
   'M. Alvarez',
-  '2026-09-28T10:02:56.121Z',
-  '2026-10-02T08:02:56.121Z',
+  '2026-09-28T11:59:01.352Z',
+  '2026-10-02T09:59:01.352Z',
   'WO-1170',
   '["/src/assets/park.jpg"]'::jsonb,
   '{"severity":"High","reason":"Public health concern at a busy park entrance","evidence":"Good","confidence":93,"similar":{"count":2,"ids":[]}}'::jsonb,
-  '[{"kind":"agent","who":"Routing Agent","text":"Routed to Sanitation. Work order WO-1170 created.","at":"2026-09-26T10:02:56.121Z"},{"kind":"agent","who":"Follow-up Agent","text":"Update requested from the Sanitation team.","at":"2026-09-30T10:02:56.121Z"},{"kind":"human","who":"M. Alvarez","text":"Bins emptied, extra pickup scheduled twice a week. Marked as Resolved.","at":"2026-10-02T08:02:56.121Z"}]'::jsonb,
-  '2026-09-26T10:02:56.121Z',
-  '2026-10-02T08:02:56.121Z'
+  '[{"kind":"agent","who":"Routing Agent","text":"Routed to Sanitation. Work order WO-1170 created.","at":"2026-09-26T11:59:01.352Z"},{"kind":"agent","who":"Follow-up Agent","text":"Update requested from the Sanitation team.","at":"2026-09-30T11:59:01.352Z"},{"kind":"human","who":"M. Alvarez","text":"Bins emptied, extra pickup scheduled twice a week. Marked as Resolved.","at":"2026-10-02T09:59:01.352Z"}]'::jsonb,
+  '2026-09-26T11:59:01.352Z',
+  '2026-10-02T09:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,
@@ -525,14 +657,14 @@ INSERT INTO public.reports (
   'Resolved',
   'Public Works',
   'D. Petrova',
-  '2026-09-29T10:02:56.121Z',
-  '2026-09-29T10:02:56.121Z',
+  '2026-09-29T11:59:01.352Z',
+  '2026-09-29T11:59:01.352Z',
   'WO-1162',
   '["/src/assets/blocked.jpg"]'::jsonb,
   '{"severity":"Low","reason":"Temporary obstruction, alternate path available","evidence":"Good","confidence":84,"similar":{"count":0,"ids":[]}}'::jsonb,
-  '[{"kind":"agent","who":"Routing Agent","text":"Routed to Public Works. Work order WO-1162 created.","at":"2026-09-24T10:02:56.121Z"},{"kind":"human","who":"D. Petrova","text":"Contractor re-secured the walkway, entrance reopened. Marked as Resolved.","at":"2026-09-29T10:02:56.121Z"}]'::jsonb,
-  '2026-09-24T10:02:56.121Z',
-  '2026-09-29T10:02:56.121Z'
+  '[{"kind":"agent","who":"Routing Agent","text":"Routed to Public Works. Work order WO-1162 created.","at":"2026-09-24T11:59:01.352Z"},{"kind":"human","who":"D. Petrova","text":"Contractor re-secured the walkway, entrance reopened. Marked as Resolved.","at":"2026-09-29T11:59:01.352Z"}]'::jsonb,
+  '2026-09-24T11:59:01.352Z',
+  '2026-09-29T11:59:01.352Z'
 ) ON CONFLICT (id) DO UPDATE SET
   status = EXCLUDED.status,
   priority = EXCLUDED.priority,

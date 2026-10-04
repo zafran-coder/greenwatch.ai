@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -10,8 +11,9 @@ import {
   Tooltip,
   LabelList,
 } from "recharts";
-import { CATEGORIES, trend14, deptRates } from "../data/mockData";
-import { useReports } from "../data/store";
+import { CATEGORIES } from "../data/mockData";
+import { api } from "../api";
+import { ChartSkeleton } from "./Skeletons";
 
 const TOOLTIP_STYLE = {
   borderRadius: 12,
@@ -33,13 +35,36 @@ const SHORT = {
   blocked: "Blocked",
 };
 
-/** Reports by category — bar chart (live from the store). */
+/** Reports by category — bar chart (live from GET /api/analytics/categories). */
 export function CategoryChart() {
-  const reports = useReports();
-  const data = Object.keys(CATEGORIES).map((key) => ({
-    name: SHORT[key],
-    count: reports.filter((r) => r.category === key).length,
-  }));
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isCurrent = true;
+    api.analytics
+      .getCategories()
+      .then((res) => {
+        if (!isCurrent) return;
+        const counts = res?.data || res || {};
+        const formatted = Object.keys(CATEGORIES).map((key) => ({
+          name: SHORT[key] || key,
+          count: typeof counts[key] === "number" ? counts[key] : 0,
+        }));
+        setData(formatted);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!isCurrent) return;
+        setLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
+  if (loading) return <ChartSkeleton height={230} />;
 
   return (
     <ResponsiveContainer width="100%" height={230}>
@@ -69,11 +94,36 @@ export function CategoryChart() {
   );
 }
 
-/** Reports over the last 14 days — line chart. */
+/** Reports over the last 14 days — line chart (live from GET /api/analytics/trend). */
 export function TrendChart() {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isCurrent = true;
+    api.analytics
+      .getTrends()
+      .then((res) => {
+        if (!isCurrent) return;
+        const trends = res?.data || res || [];
+        setData(trends);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!isCurrent) return;
+        setLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
+  if (loading) return <ChartSkeleton height={230} />;
+
   return (
     <ResponsiveContainer width="100%" height={230}>
-      <LineChart data={trend14} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+      <LineChart data={data} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
         <CartesianGrid vertical={false} stroke="#EDF2F0" />
         <XAxis
           dataKey="day"
@@ -109,12 +159,37 @@ export function TrendChart() {
   );
 }
 
-/** Resolution rate by department — horizontal bars. */
+/** Resolution rate by department — horizontal bars (live from GET /api/analytics/departments). */
 export function DeptRateChart() {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isCurrent = true;
+    api.analytics
+      .getDepartments()
+      .then((res) => {
+        if (!isCurrent) return;
+        const depts = res?.data || res || [];
+        setData(depts);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!isCurrent) return;
+        setLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
+  if (loading) return <ChartSkeleton height={230} />;
+
   return (
     <ResponsiveContainer width="100%" height={230}>
       <BarChart
-        data={deptRates}
+        data={data}
         layout="vertical"
         margin={{ top: 4, right: 40, left: 0, bottom: 0 }}
       >

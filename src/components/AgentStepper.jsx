@@ -1,47 +1,39 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Check, Loader2, Cpu } from "lucide-react";
 
-const STEP_MS = [500, 700, 750, 700, 650, 600];
-
 /**
- * Vertical animated stepper. Steps light up one by one (~3.9s total),
- * then onDone fires.
+ * Vertical animated stepper driven by the server AI Agent Pipeline.
+ * Visually identical to original design.
+ * Steps light up as each agent completes its work, then onDone fires.
+ *
+ * steps: [{ key, label, status: "pending" | "running" | "completed", detail }]
  */
-export default function AgentStepper({ steps, onDone }) {
-  const [active, setActive] = useState(0); // index currently running
-  const [done, setDone] = useState(0); // count completed
-  const doneRef = useRef(false);
+export default function AgentStepper({ steps = [], onDone }) {
+  const doneFiredRef = useRef(false);
+
+  // Determine which step is currently active
+  const firstIncompleteIdx = steps.findIndex((s) => s.status !== "completed");
+  const allCompleted = steps.length > 0 && firstIncompleteIdx === -1;
 
   useEffect(() => {
-    let timer;
-    let i = 0;
-    const run = () => {
-      if (i >= steps.length) {
-        if (!doneRef.current) {
-          doneRef.current = true;
-          timer = setTimeout(() => onDone?.(), 500);
-        }
-        return;
-      }
-      setActive(i);
-      timer = setTimeout(() => {
-        setDone((d) => d + 1);
-        i += 1;
-        run();
-      }, STEP_MS[i % STEP_MS.length]);
-    };
-    run();
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (allCompleted && !doneFiredRef.current) {
+      doneFiredRef.current = true;
+      const timer = setTimeout(() => {
+        onDone?.();
+      }, 700);
+      return () => clearTimeout(timer);
+    }
+  }, [allCompleted, onDone]);
 
   return (
     <ol className="relative space-y-0">
       {steps.map((step, i) => {
-        const isDone = i < done;
-        const isActive = i === active && !isDone;
+        const isDone = step.status === "completed";
+        const isActive =
+          !isDone && (step.status === "running" || i === firstIncompleteIdx);
+
         return (
-          <li key={step.key} className="relative flex gap-3.5 pb-6 last:pb-0">
+          <li key={step.key || i} className="relative flex gap-3.5 pb-6 last:pb-0">
             {/* connector */}
             {i < steps.length - 1 && (
               <span className="absolute left-[15px] top-8 h-[calc(100%-26px)] w-0.5 bg-slate-200">
@@ -59,8 +51,8 @@ export default function AgentStepper({ steps, onDone }) {
                 isDone
                   ? "border-green-600 bg-green-600 text-white"
                   : isActive
-                    ? "border-green-500 bg-white text-green-600"
-                    : "border-slate-200 bg-white text-slate-300"
+                  ? "border-green-500 bg-white text-green-600"
+                  : "border-slate-200 bg-white text-slate-300"
               }`}
             >
               {isDone ? (
@@ -93,10 +85,10 @@ export default function AgentStepper({ steps, onDone }) {
               </p>
               <p
                 className={`mt-0.5 text-xs text-slate-500 transition-opacity duration-300 ${
-                  isDone ? "opacity-100" : "opacity-0"
+                  isDone && step.detail ? "opacity-100" : "opacity-0"
                 }`}
               >
-                {isDone ? step.detail : "…"}
+                {isDone && step.detail ? step.detail : "…"}
               </p>
             </div>
           </li>

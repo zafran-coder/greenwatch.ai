@@ -5,7 +5,9 @@ const D = 24 * H;
 const ago = (d = 0, h = 0) => new Date(Date.now() - d * D - h * H).toISOString();
 const ahead = (d = 0, h = 0) => new Date(Date.now() + d * D + h * H).toISOString();
 
-export const SEED_PASSWORD_HASH = bcrypt.hashSync("Password123!", 10);
+// Deterministic bcrypt hash for "Password123!" with 10 salt rounds (matches Supabase database)
+export const SEED_PASSWORD_HASH =
+  "$2b$10$FLiVrw6fJ6VtXMQg2IYiZOtTdKBVsFmdksV9yqii2zGtzur0kSt5K";
 
 export const SEED_USERS = [
   {

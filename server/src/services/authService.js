@@ -10,7 +10,41 @@ import {
 
 export const authService = {
   async login({ email, password }) {
-    const user = await db.findUserByEmail(email);
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+
+    // Check env admin credentials first
+    if (
+      config.admin &&
+      config.admin.email &&
+      typeof config.admin.password === "string" &&
+      config.admin.password.length > 0 &&
+      normalizedEmail === config.admin.email.toLowerCase() &&
+      password === config.admin.password
+    ) {
+      let adminUser = await db.findUserByEmail(config.admin.email);
+      if (!adminUser) {
+        adminUser = {
+          id: "u-admin",
+          email: config.admin.email,
+          name: "City Operations Admin",
+          role: "ADMIN",
+          department: null,
+        };
+      }
+      const payload = {
+        id: adminUser.id,
+        email: adminUser.email,
+        name: adminUser.name,
+        role: "ADMIN",
+        department: adminUser.department,
+      };
+      const token = jwt.sign(payload, config.jwt.secret, {
+        expiresIn: config.jwt.expiresIn,
+      });
+      return { token, user: payload };
+    }
+
+    const user = await db.findUserByEmail(normalizedEmail);
     if (!user) {
       throw new UnauthorizedError("Invalid email or password");
     }

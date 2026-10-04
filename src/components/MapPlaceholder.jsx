@@ -1,77 +1,166 @@
-import { useState } from "react";
+import { useEffect, useMemo } from "react";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  useMap,
+  useMapEvents,
+} from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import { Map as MapIcon, MapPin } from "lucide-react";
 
-/**
- * Lightweight static "map" — an SVG street grid with a pin.
- * Click anywhere inside the box to move the pin. No map library needed.
- */
-export default function MapPlaceholder({ address, className = "" }) {
-  const [pin, setPin] = useState({ x: 50, y: 50 });
+// Fix the default Leaflet marker icon bug with Vite
+import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
+import markerIcon from "leaflet/dist/images/marker-icon.png";
+import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
-  const movePin = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setPin({
-      x: Math.min(96, Math.max(4, ((e.clientX - rect.left) / rect.width) * 100)),
-      y: Math.min(92, Math.max(8, ((e.clientY - rect.top) / rect.height) * 100)),
-    });
-  };
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  tooltipAnchor: [16, -28],
+  shadowSize: [41, 41],
+});
+
+// Default center on Islamabad, Pakistan
+export const ISLAMABAD_CENTER = [33.6844, 73.0479];
+export const DEFAULT_ZOOM = 13;
+
+/**
+ * Helper component: listens for clicks on the map to place or move the pin
+ */
+function MapClickHandler({ onPinChange }) {
+  useMapEvents({
+    click(e) {
+      if (onPinChange) {
+        onPinChange({
+          lat: Number(e.latlng.lat.toFixed(6)),
+          lng: Number(e.latlng.lng.toFixed(6)),
+        });
+      }
+    },
+  });
+  return null;
+}
+
+/**
+ * Helper component: re-centers the map when coordinates change externally
+ */
+function MapRecenter({ lat, lng }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (lat != null && lng != null && !isNaN(lat) && !isNaN(lng)) {
+      const current = map.getCenter();
+      const distance = Math.hypot(current.lat - lat, current.lng - lng);
+      // Smoothly pan if within reasonable distance, otherwise jump
+      if (distance > 0.0001) {
+        map.setView([lat, lng], map.getZoom(), { animate: true });
+      }
+    }
+  }, [lat, lng, map]);
+
+  return null;
+}
+
+/**
+ * Helper component: invalidates map container size on mount to ensure tiles fill properly
+ */
+function MapResizeInvalidator() {
+  const map = useMap();
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [map]);
+
+  return null;
+}
+
+/**
+ * Interactive OpenStreetMap component using react-leaflet.
+ * Centered on Islamabad, with identical dimensions, borders, and pin-to-click/drag behavior.
+ */
+export default function MapPlaceholder({
+  address,
+  lat,
+  lng,
+  onPinChange,
+  className = "",
+}) {
+  const hasCoordinates =
+    lat != null && lng != null && !isNaN(lat) && !isNaN(lng);
+
+  // Determine current active marker coordinates
+  const markerPosition = hasCoordinates
+    ? [Number(lat), Number(lng)]
+    : ISLAMABAD_CENTER;
+
+  // Draggable marker handlers
+  const markerEventHandlers = useMemo(
+    () => ({
+      dragend(e) {
+        if (onPinChange) {
+          const marker = e.target;
+          const pos = marker.getLatLng();
+          onPinChange({
+            lat: Number(pos.lat.toFixed(6)),
+            lng: Number(pos.lng.toFixed(6)),
+          });
+        }
+      },
+    }),
+    [onPinChange]
+  );
 
   return (
     <div
-      onClick={movePin}
-      role="button"
-      aria-label="Map preview — click to fine-tune the pin"
-      title="Click to fine-tune the pin"
-      className={`relative cursor-crosshair select-none overflow-hidden rounded-xl border border-slate-200 bg-[#ECF3ED] ${className}`}
+      className={`relative select-none overflow-hidden rounded-xl border border-slate-200 bg-[#ECF3ED] ${className}`}
+      aria-label="Map preview — click or drag marker to set coordinates"
     >
-      <svg
-        viewBox="0 0 400 220"
-        className="h-full w-full"
-        preserveAspectRatio="xMidYMid slice"
-        aria-hidden
+      <MapContainer
+        center={markerPosition}
+        zoom={DEFAULT_ZOOM}
+        scrollWheelZoom={false}
+        className="h-full w-full z-0"
+        style={{ height: "100%", width: "100%" }}
       >
-        <rect width="400" height="220" fill="#ECF3ED" />
-        {/* green blocks = parks */}
-        <rect x="24" y="30" width="90" height="64" rx="10" fill="#D8EAD9" />
-        <rect x="286" y="120" width="92" height="70" rx="10" fill="#D8EAD9" />
-        <rect x="250" y="18" width="60" height="44" rx="10" fill="#E1EFE2" />
-        {/* roads */}
-        <g stroke="#FFFFFF" strokeLinecap="round">
-          <path d="M0 116 H400" strokeWidth="16" />
-          <path d="M150 0 V220" strokeWidth="14" />
-          <path d="M0 180 C120 170 260 196 400 176" strokeWidth="12" fill="none" />
-          <path d="M255 0 C265 80 235 150 250 220" strokeWidth="10" fill="none" />
-          <path d="M0 60 H130" strokeWidth="9" />
-          <path d="M320 60 H400" strokeWidth="9" />
-        </g>
-        {/* dashes on main road */}
-        <path
-          d="M0 116 H400"
-          stroke="#C9DDD0"
-          strokeWidth="2"
-          strokeDasharray="10 12"
+        {/* OpenStreetMap TileLayer with visible OSM Attribution */}
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          maxZoom={19}
         />
-      </svg>
 
-      {/* label */}
-      <span className="absolute left-2.5 top-2.5 flex items-center gap-1 rounded-md bg-white/90 px-2 py-1 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur-sm">
+        {/* Marker with drag support and fixed default icon */}
+        <Marker
+          position={markerPosition}
+          draggable={Boolean(onPinChange)}
+          eventHandlers={markerEventHandlers}
+        />
+
+        {/* Map interaction helpers */}
+        {onPinChange && <MapClickHandler onPinChange={onPinChange} />}
+        <MapRecenter lat={hasCoordinates ? lat : null} lng={hasCoordinates ? lng : null} />
+        <MapResizeInvalidator />
+      </MapContainer>
+
+      {/* Top-left badge: Map preview indicator */}
+      <span className="pointer-events-none absolute left-2.5 top-2.5 z-[1000] flex items-center gap-1 rounded-md bg-white/90 px-2 py-1 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur-sm">
         <MapIcon className="size-3 text-green-600" />
         Map preview
       </span>
 
-      {/* draggable-feel pin */}
-      <div
-        className="absolute -translate-x-1/2 -translate-y-1/2 transition-all duration-300 ease-out"
-        style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
-      >
-        <span className="absolute -inset-3 animate-ping rounded-full bg-green-600/20" />
-        <span className="relative flex size-9 items-center justify-center rounded-full bg-green-600 text-white shadow-pop ring-4 ring-white">
-          <MapPin className="size-4" />
-        </span>
-      </div>
-
+      {/* Bottom-left badge: Address preview (constrained to ensure OSM attribution at bottom-right is unobstructed) */}
       {address && (
-        <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center gap-1.5 rounded-lg bg-white/95 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-2.5 left-2.5 z-[1000] flex max-w-[calc(100%-140px)] items-center gap-1.5 rounded-lg bg-white/95 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm backdrop-blur-sm sm:max-w-xs">
           <MapPin className="size-3.5 shrink-0 text-green-600" />
           <span className="truncate">{address}</span>
         </div>

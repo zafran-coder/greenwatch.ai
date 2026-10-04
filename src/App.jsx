@@ -8,6 +8,7 @@ import {
 } from "react-router-dom";
 import { Compass } from "lucide-react";
 import { ToastProvider } from "./components/Toast";
+import { AuthProvider } from "./context/AuthContext";
 import Navbar from "./components/Navbar";
 import EmptyState from "./components/EmptyState";
 import { Card, Btn } from "./components/ui";
@@ -50,7 +51,7 @@ function Footer() {
   return (
     <footer className="mt-14 border-t border-slate-200/70">
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-4 py-6 text-xs text-slate-400 sm:flex-row sm:px-6">
-        <p>GreenWatch AI — demo frontend. All data stays in your browser.</p>
+        <p>GreenWatch AI — Municipal Operations Platform.</p>
         <p className="font-medium text-slate-500">AI suggested · human approved</p>
       </div>
     </footer>
@@ -82,7 +83,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <ToastProvider>
-        <Shell />
+        <AuthProvider>
+          <Shell />
+        </AuthProvider>
       </ToastProvider>
     </BrowserRouter>
   );

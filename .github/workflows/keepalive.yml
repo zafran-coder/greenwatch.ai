@@ -1,0 +1,30 @@
+name: GreenWatch Keepalive & Cron
+
+on:
+  schedule:
+    # Run every 15 minutes to keep free Render service awake and trigger SLA audits
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping API Health
+        run: |
+          URL="${BACKEND_URL%/}/api/health"
+          echo "Checking health at ${URL}..."
+          curl --fail --show-error --silent "${URL}"
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+
+      - name: Run Background SLA Jobs
+        run: |
+          URL="${BACKEND_URL%/}/api/jobs/run"
+          echo "Executing background jobs at ${URL}..."
+          curl --fail --show-error --silent -X POST "${URL}" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

@@ -13,6 +13,8 @@ import {
   Plus,
   Check,
   Link2,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import { Card, CardHeader, Btn, Select } from "../components/ui";
 import { PriorityBadge, StatusBadge, OverdueTag } from "../components/Badges";
@@ -23,7 +25,9 @@ import WorkOrderCard from "../components/WorkOrderCard";
 import FollowupCard from "../components/FollowupCard";
 import ActivityLog from "../components/ActivityLog";
 import EmptyState from "../components/EmptyState";
-import { useReports, patchReport, appendActivity } from "../data/store";
+import { ReportDetailSkeleton } from "../components/Skeletons";
+import { useAuth } from "../context/AuthContext";
+import { api } from "../api";
 import { CATEGORIES, STATUS_STEPS } from "../data/mockData";
 import { useToast } from "../components/Toast";
 import { timeAgo, fmtDate, isOverdue } from "../utils/format";
@@ -31,25 +35,68 @@ import { timeAgo, fmtDate, isOverdue } from "../utils/format";
 export default function ReportDetail() {
   const { id } = useParams();
   const location = useLocation();
-  const reports = useReports();
   const toast = useToast();
+  const { isOfficial, requireOfficial, user } = useAuth();
   const similarRef = useRef(null);
 
-  const report = reports.find((r) => r.id === id);
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [note, setNote] = useState("");
+  const [submittingNote, setSubmittingNote] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showSimilar, setShowSimilar] = useState(location.hash === "#similar");
+  const [similarReports, setSimilarReports] = useState([]);
+
+  const fetchReport = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await api.reports.getById(id);
+      setReport(data);
+
+      // If report has similar IDs, load details for those
+      const similarIds = data?.ai?.similar?.ids || [];
+      if (Array.isArray(similarIds) && similarIds.length > 0) {
+        Promise.allSettled(
+          similarIds.slice(0, 3).map((sid) => api.reports.getById(sid))
+        ).then((results) => {
+          const loaded = results
+            .filter((r) => r.status === "fulfilled" && r.value)
+            .map((r) => r.value);
+          setSimilarReports(loaded);
+        });
+      }
+    } catch (err) {
+      setError(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchReport();
+  }, [id]);
 
   useEffect(() => {
     if (location.hash === "#similar" && similarRef.current) {
       setShowSimilar(true);
       setTimeout(
-        () => similarRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        () =>
+          similarRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          }),
         150
       );
     }
   }, [location.hash]);
 
-  if (!report) {
+  if (loading && !report) {
+    return <ReportDetailSkeleton />;
+  }
+
+  if (error || !report) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-16 sm:px-6">
         <Card>
@@ -72,50 +119,73 @@ export default function ReportDetail() {
 
   const resolved = report.status === "Resolved";
   const overdue = isOverdue(report);
-  const similar = (report.ai.similar?.ids || [])
-    .map((rid) => reports.find((r) => r.id === rid))
-    .filter(Boolean);
+  const catLabel =
+    CATEGORIES[report.category]?.label ||
+    (report.category ? report.category.charAt(0).toUpperCase() + report.category.slice(1) : "Issue");
 
   const changeStatus = (value) => {
-    patchReport(
-      report.id,
-      {
-        status: value,
-        resolvedAt: value === "Resolved" ? new Date().toISOString() : null,
-      },
-      { kind: "human", who: "You (Official)", text: `Status changed to ${value}.` }
-    );
-    if (value === "Resolved") {
-      appendActivity(report.id, {
-        kind: "agent",
-        who: "Follow-up Agent",
-        text: "Citizen notified and asked to confirm the fix.",
-      });
-    }
-    toast(
-      value === "Resolved"
-        ? `${report.ref} marked as resolved`
-        : `Status set to ${value}`
-    );
+    requireOfficial(async () => {
+      setUpdatingStatus(true);
+      try {
+        const updated = await api.reports.updateStatus(report.id, value);
+        setReport(updated);
+        toast(
+          value === "Resolved"
+            ? `${report.ref} marked as resolved`
+            : `Status set to ${value}`
+        );
+      } catch (err) {
+        toast(err.message || "Failed to update status", "error");
+      } finally {
+        setUpdatingStatus(false);
+      }
+    });
   };
 
   const addNote = () => {
     const text = note.trim();
     if (!text) return;
-    patchReport(report.id, {}, { kind: "human", who: "You (Official)", text: `Note: “${text}”` });
-    setNote("");
-    toast("Note added");
+
+    requireOfficial(async () => {
+      setSubmittingNote(true);
+      try {
+        const authorName = user?.name || "Official";
+        const updated = await api.reports.addActivity(report.id, {
+          kind: "human",
+          who: authorName,
+          text: `Note: “${text}”`,
+          isInternal: true,
+        });
+        setReport(updated);
+        setNote("");
+        toast("Note added");
+      } catch (err) {
+        toast(err.message || "Failed to add note", "error");
+      } finally {
+        setSubmittingNote(false);
+      }
+    });
   };
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
-      <Link
-        to="/dashboard"
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
-      >
-        <ArrowLeft className="size-4" />
-        Dashboard
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link
+          to="/dashboard"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
+        >
+          <ArrowLeft className="size-4" />
+          Dashboard
+        </Link>
+        <button
+          onClick={fetchReport}
+          title="Reload report data"
+          className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700"
+        >
+          <RefreshCw className="size-3.5" />
+          Refresh
+        </button>
+      </div>
 
       {/* Header */}
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-3">
@@ -123,7 +193,7 @@ export default function ReportDetail() {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">
-              {CATEGORIES[report.category].label}
+              {catLabel}
             </h1>
             <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
               {report.ref}
@@ -131,14 +201,19 @@ export default function ReportDetail() {
           </div>
           <p className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-500">
             <MapPin className="size-3.5" />
-            {report.location.address}
+            {report.location?.address || "Location on record"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
           <PriorityBadge value={report.priority} />
           <StatusBadge value={report.status} />
           {overdue && (
-            <OverdueTag days={Math.max(1, Math.round((Date.now() - new Date(report.dueDate)) / 864e5))} />
+            <OverdueTag
+              days={Math.max(
+                1,
+                Math.round((Date.now() - new Date(report.dueDate || report.slaDueAt)) / 864e5)
+              )}
+            />
           )}
         </div>
       </div>
@@ -147,7 +222,9 @@ export default function ReportDetail() {
         <div className="mt-5 flex items-center gap-2.5 rounded-2xl border border-green-200 bg-green-50 px-4 py-3.5 text-sm text-green-800">
           <CheckCircle2 className="size-4.5 shrink-0 text-green-600" />
           <span>
-            <span className="font-semibold">Resolved on {fmtDate(report.resolvedAt)}</span>
+            <span className="font-semibold">
+              Resolved on {fmtDate(report.resolvedAt || report.updatedAt)}
+            </span>
             {" — "}the citizen was notified and the Follow-up Agent closed the loop.
           </span>
         </div>
@@ -157,21 +234,26 @@ export default function ReportDetail() {
         {/* ------------------------------------------------------- LEFT */}
         <div className="space-y-5">
           <Card>
-            <CardHeader icon={UserRound} title="Citizen report" sub={`Filed ${timeAgo(report.createdAt)} · ${report.location.area}`} />
+            <CardHeader
+              icon={UserRound}
+              title="Citizen report"
+              sub={`Filed ${timeAgo(report.createdAt)} · ${report.location?.area || "Reported via app"}`}
+            />
             <div className="p-5">
               <p className="text-[15px] leading-relaxed text-slate-700">
                 {report.description}
               </p>
               <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-slate-400">
                 <span className="inline-flex items-center gap-1.5">
-                  <MapPin className="size-3.5" /> {report.location.address}
+                  <MapPin className="size-3.5" />{" "}
+                  {report.location?.address || "Location on record"}
                 </span>
                 <span className="inline-flex items-center gap-1.5">
                   <Clock className="size-3.5" /> Reported {timeAgo(report.createdAt)}
                 </span>
               </div>
 
-              {report.photos.length > 0 && (
+              {Array.isArray(report.photos) && report.photos.length > 0 && (
                 <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
                   {report.photos.map((src, i) => (
                     <img
@@ -184,25 +266,34 @@ export default function ReportDetail() {
                 </div>
               )}
 
-              <MapPlaceholder address={report.location.address} className="mt-4 h-48" />
+              <MapPlaceholder
+                address={report.location?.address}
+                lat={report.location?.lat}
+                lng={report.location?.lng}
+                className="mt-4 h-48"
+              />
             </div>
           </Card>
 
           <AISummaryCard
             analysis={{
               category: report.category,
-              categoryLabel: CATEGORIES[report.category].label,
-              priority: report.ai.severity,
-              reason: report.ai.reason,
-              evidence: report.ai.evidence,
-              confidence: report.ai.confidence,
+              categoryLabel: catLabel,
+              priority: report.ai?.severity || report.priority,
+              reason: report.ai?.reason || `Report evaluated as ${report.priority} priority.`,
+              evidence: report.ai?.evidence || "Good",
+              confidence: report.ai?.confidence || 94,
               department: report.department,
-              similar: report.ai.similar,
+              similar: report.ai?.similar || { count: 0 },
             }}
             onViewSimilar={() => {
               setShowSimilar(true);
               setTimeout(
-                () => similarRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+                () =>
+                  similarRef.current?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                  }),
                 50
               );
             }}
@@ -221,7 +312,7 @@ export default function ReportDetail() {
                 </span>
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900">
-                    Similar reports ({report.ai.similar?.count ?? 0})
+                    Similar reports ({report.ai?.similar?.count ?? 0})
                   </h3>
                   <p className="mt-0.5 text-xs text-slate-500">
                     Possible duplicates found by the Duplicate Detection agent
@@ -234,13 +325,13 @@ export default function ReportDetail() {
             </button>
             {showSimilar && (
               <div className="border-t border-slate-100 px-5 pb-4 pt-1">
-                {similar.length === 0 ? (
+                {similarReports.length === 0 ? (
                   <p className="py-3 text-sm text-slate-500">
                     Nothing else like this nearby — this looks like a unique case.
                   </p>
                 ) : (
                   <ul className="divide-y divide-slate-50">
-                    {similar.map((s) => (
+                    {similarReports.map((s) => (
                       <li key={s.id}>
                         <Link
                           to={`/reports/${s.id}`}
@@ -249,10 +340,14 @@ export default function ReportDetail() {
                           <CategoryIcon category={s.category} size="sm" />
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-slate-800">{s.ref}</p>
-                            <p className="truncate text-xs text-slate-500">{s.location.address}</p>
+                            <p className="truncate text-xs text-slate-500">
+                              {s.location?.address}
+                            </p>
                           </div>
                           <StatusBadge value={s.status} />
-                          <span className="text-xs text-slate-400">{timeAgo(s.createdAt)}</span>
+                          <span className="text-xs text-slate-400">
+                            {timeAgo(s.createdAt)}
+                          </span>
                         </Link>
                       </li>
                     ))}
@@ -265,15 +360,22 @@ export default function ReportDetail() {
 
         {/* ------------------------------------------------------- RIGHT */}
         <div className="space-y-5">
-          <WorkOrderCard report={report} />
+          <WorkOrderCard
+            report={report}
+            onUpdate={(updated) => setReport(updated)}
+          />
 
           <Card>
-            <CardHeader icon={ListChecks} title="Update status" sub="Changes notify the citizen" />
+            <CardHeader
+              icon={ListChecks}
+              title="Update status"
+              sub="Changes notify the citizen"
+            />
             <div className="space-y-3 p-5">
               <Select
                 value={report.status}
                 onChange={(e) => changeStatus(e.target.value)}
-                disabled={resolved}
+                disabled={resolved || updatingStatus}
               >
                 {STATUS_STEPS.map((s) => (
                   <option key={s}>{s}</option>
@@ -286,17 +388,36 @@ export default function ReportDetail() {
                   onChange={(e) => setNote(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && addNote()}
                   placeholder="Add a note…"
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 outline-none transition focus:border-green-500 focus:ring-4 focus:ring-green-600/10"
+                  disabled={submittingNote}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 outline-none transition focus:border-green-500 focus:ring-4 focus:ring-green-600/10 disabled:opacity-50"
                 />
-                <Btn variant="secondary" size="sm" onClick={addNote} disabled={!note.trim()} className="shrink-0">
-                  <Plus className="size-4" />
+                <Btn
+                  variant="secondary"
+                  size="sm"
+                  onClick={addNote}
+                  disabled={!note.trim() || submittingNote}
+                  className="shrink-0"
+                >
+                  {submittingNote ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Plus className="size-4" />
+                  )}
                   Note
                 </Btn>
               </div>
 
               {!resolved ? (
-                <Btn className="w-full" onClick={() => changeStatus("Resolved")}>
-                  <Check className="size-4" strokeWidth={3} />
+                <Btn
+                  className="w-full"
+                  disabled={updatingStatus}
+                  onClick={() => changeStatus("Resolved")}
+                >
+                  {updatingStatus ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Check className="size-4" strokeWidth={3} />
+                  )}
                   Mark as Resolved
                 </Btn>
               ) : (
@@ -310,9 +431,13 @@ export default function ReportDetail() {
           <FollowupCard report={report} />
 
           <Card>
-            <CardHeader icon={History} title="Activity" sub="Agent and human actions, newest first" />
+            <CardHeader
+              icon={History}
+              title="Activity"
+              sub="Agent and human actions, newest first"
+            />
             <div className="p-5">
-              <ActivityLog items={report.activity} />
+              <ActivityLog items={report.activity || []} />
             </div>
           </Card>
         </div>

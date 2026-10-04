@@ -1,9 +1,10 @@
+import { useEffect, useState } from "react";
 import { ClipboardList } from "lucide-react";
 import { Card, CardHeader, Select, inputCls } from "./ui";
 import { AIBadge, PriorityBadge } from "./Badges";
-import { OFFICIALS } from "../data/mockData";
-import { patchReport } from "../data/store";
 import { useToast } from "./Toast";
+import { useAuth } from "../context/AuthContext";
+import { api } from "../api";
 import { dateInputValue, fmtDate } from "../utils/format";
 
 function Row({ label, children }) {
@@ -17,43 +18,71 @@ function Row({ label, children }) {
   );
 }
 
-export default function WorkOrderCard({ report }) {
+export default function WorkOrderCard({ report, onUpdate }) {
   const toast = useToast();
+  const { requireOfficial, isOfficial } = useAuth();
+  const [officials, setOfficials] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    let isCurrent = true;
+    api.analytics
+      .getOfficials()
+      .then((res) => {
+        if (!isCurrent) return;
+        const list = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+        setOfficials(list);
+      })
+      .catch(() => {});
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
+  // Filter officials by report department if matches, otherwise show all
+  const filteredOfficials = officials.filter((o) => {
+    if (!report.department) return true;
+    return o.department?.toLowerCase() === report.department?.toLowerCase();
+  });
+
+  const displayOfficials = filteredOfficials.length > 0 ? filteredOfficials : officials;
 
   const assign = (name) => {
-    const assignee = name || null;
-    patchReport(
-      report.id,
-      {
-        assignee,
-        status:
-          report.status === "New" || report.status === "Verified"
-            ? "Assigned"
-            : report.status,
-      },
-      {
-        kind: "human",
-        who: "You (Official)",
-        text: assignee
-          ? `Assigned the work order to ${assignee}.`
-          : "Unassigned the work order.",
+    requireOfficial(async () => {
+      setSubmitting(true);
+      try {
+        const assignee = name || null;
+        const updated = await api.reports.updateWorkOrder(report.id, {
+          assignee,
+        });
+        toast(assignee ? `Assigned to ${assignee}` : "Work order unassigned");
+        onUpdate?.(updated);
+      } catch (err) {
+        toast(err.message || "Failed to update assignee", "error");
+      } finally {
+        setSubmitting(false);
       }
-    );
-    toast(assignee ? `Assigned to ${assignee}` : "Work order unassigned");
+    });
   };
 
   const changeDue = (value) => {
     if (!value) return;
-    patchReport(
-      report.id,
-      { dueDate: new Date(`${value}T17:00:00`).toISOString() },
-      {
-        kind: "human",
-        who: "You (Official)",
-        text: `Due date changed to ${fmtDate(new Date(`${value}T17:00:00`))}.`,
+    requireOfficial(async () => {
+      setSubmitting(true);
+      try {
+        const dueDate = new Date(`${value}T17:00:00`).toISOString();
+        const updated = await api.reports.updateWorkOrder(report.id, {
+          dueDate,
+        });
+        toast(`Due date updated to ${fmtDate(new Date(dueDate))}`);
+        onUpdate?.(updated);
+      } catch (err) {
+        toast(err.message || "Failed to update due date", "error");
+      } finally {
+        setSubmitting(false);
       }
-    );
-    toast("Due date updated");
+    });
   };
 
   return (
@@ -64,7 +93,7 @@ export default function WorkOrderCard({ report }) {
         sub="AI suggested · human approved"
         aside={
           <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
-            {report.workOrder}
+            {report.workOrder || report.workOrderRef || "WO-PENDING"}
           </span>
         }
       />
@@ -77,12 +106,13 @@ export default function WorkOrderCard({ report }) {
           <Select
             value={report.assignee || ""}
             onChange={(e) => assign(e.target.value)}
+            disabled={submitting}
             className="w-44"
           >
             <option value="">Unassigned</option>
-            {(OFFICIALS[report.department] || []).map((o) => (
-              <option key={o} value={o}>
-                {o}
+            {displayOfficials.map((o) => (
+              <option key={o.id || o.name} value={o.name}>
+                {o.name}
               </option>
             ))}
           </Select>
@@ -90,8 +120,9 @@ export default function WorkOrderCard({ report }) {
         <Row label="Due date">
           <input
             type="date"
-            defaultValue={dateInputValue(report.dueDate)}
+            defaultValue={dateInputValue(report.dueDate || report.slaDueAt)}
             onChange={(e) => changeDue(e.target.value)}
+            disabled={submitting}
             className={`${inputCls} w-44 py-1.5!`}
           />
         </Row>
