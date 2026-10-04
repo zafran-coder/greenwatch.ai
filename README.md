@@ -13,6 +13,20 @@ GreenWatch AI empowers citizens to report environmental and municipal issues (il
 
 ---
 
+## Team
+
+| Member | Role |
+|---|---|
+| ZAFRAN ALI | Team Leader, Core Developer & Deployment |
+| Tayyab Irshad | Frontend Developer |
+| Samia Akram | Slides / Presentation Design |
+| Iman Hameed | Presenter |
+| Tooba Nasir | PRD (Product Requirements Document) |
+
+Built for Pak Angels Chorat 11 Final Hackathon.
+
+---
+
 ## 🚀 Key Features
 
 - **Citizen Issue Reporting (No Login Required)**: Submit reports with description, photos, and precise geolocation. Instant tracking via human-friendly reference numbers (`GW-XXXX`).
